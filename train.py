@@ -228,8 +228,9 @@ class Rob2PhenoTrainer(DefaultTrainer):
          (from Mask2Former/train_net.py)
     """
 
-    # Set by main() before training starts — allows variant to inject a custom mapper
+    # Set by main() before training starts — allows variant to inject custom mappers
     _custom_mapper = None
+    _custom_test_mapper = None
 
     @classmethod
     def build_train_loader(cls, cfg):
@@ -240,6 +241,12 @@ class Rob2PhenoTrainer(DefaultTrainer):
         else:
             mapper = MaskFormerInstanceDatasetMapper(cfg, True)
         return build_detection_train_loader(cfg, mapper=mapper)
+
+    @classmethod
+    def build_test_loader(cls, cfg, dataset_name):
+        if cls._custom_test_mapper is not None:
+            return build_detection_test_loader(cfg, dataset_name, mapper=cls._custom_test_mapper)
+        return build_detection_test_loader(cfg, dataset_name)
 
     @classmethod
     def build_evaluator(cls, cfg, dataset_name, output_folder=None):
@@ -388,7 +395,9 @@ def main():
 
     # 5. Set custom mapper if variant provides one
     custom_mapper = variant.get_mapper(cfg, is_train=True)
+    custom_test_mapper = variant.get_mapper(cfg, is_train=False)
     Rob2PhenoTrainer._custom_mapper = custom_mapper
+    Rob2PhenoTrainer._custom_test_mapper = custom_test_mapper
 
     # 6. Eval-only mode
     if args.eval_only:
@@ -398,7 +407,10 @@ def main():
         DetectionCheckpointer(model).load(
             os.path.join(cfg.OUTPUT_DIR, "model_final.pth")
         )
-        val_loader = build_detection_test_loader(cfg, "rob2pheno_val")
+        if custom_test_mapper is not None:
+            val_loader = build_detection_test_loader(cfg, "rob2pheno_val", mapper=custom_test_mapper)
+        else:
+            val_loader = build_detection_test_loader(cfg, "rob2pheno_val")
         evaluator = COCOEvaluator(
             "rob2pheno_val",
             output_dir=os.path.join(cfg.OUTPUT_DIR, "eval_final"),
