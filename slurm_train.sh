@@ -3,9 +3,9 @@
 #SBATCH --output=logs/train_%j.out
 #SBATCH --error=logs/train_%j.err
 #SBATCH --partition=ampere80
-#SBATCH --time=04:00:00
+#SBATCH --time=02:00:00
 #SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=8
 
 # Environment setup (from guides/hpc_env_setup.md)
 module load anaconda/conda3 cuda/cuda-11.6
@@ -28,9 +28,9 @@ if [ $? -ne 0 ]; then
 fi
 
 # Train
-python train.py \
+python -W ignore::FutureWarning train.py \
     --variant ${VARIANT:-rgb} \
-    --batch-size ${BATCH_SIZE:-2} \
-    --lr ${LR:-1e-4} \
+    --batch-size ${BATCH_SIZE:-4} \
+    --lr ${LR:-2e-4} \
     --max-iter ${MAX_ITER:-5000} \
-    --num-workers 4
+    --num-workers 8
