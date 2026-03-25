@@ -93,6 +93,9 @@ def update_model(model, cfg):
         stride=old_conv.stride,
     )
 
+    # Move new conv to same device/dtype as old conv before copying weights
+    new_conv = new_conv.to(device=old_conv.weight.device, dtype=old_conv.weight.dtype)
+
     # Copy pretrained RGB weights; zero-init depth channel
     new_conv.weight.data[:, :3, :, :] = old_conv.weight.data
     new_conv.bias.data = old_conv.bias.data
