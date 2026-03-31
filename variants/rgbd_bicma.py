@@ -125,7 +125,7 @@ def update_config(cfg):
 
 def update_model(model, cfg):
     """Replace single PatchEmbed with dual streams + BiCMA fusion."""
-    from Mask2Former.mask2former.modeling.backbone.swin import PatchEmbed
+    PatchEmbed = type(model.backbone.patch_embed)
 
     backbone = model.backbone
     old_pe = backbone.patch_embed
