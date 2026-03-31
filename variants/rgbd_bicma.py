@@ -32,7 +32,7 @@ class BiCMAFusion(nn.Module):
     to re-weight the other modality's token sequence.
     """
 
-    def __init__(self, embed_dim, num_iters=2):
+    def __init__(self, embed_dim, num_iters=1):
         super().__init__()
         self.num_iters = num_iters
         self.scale = embed_dim ** -0.5
@@ -157,7 +157,7 @@ def update_model(model, cfg):
         patch_embed_depth.norm.load_state_dict(old_pe.norm.state_dict())
 
     # --- BiCMA fusion module (parameter-free) ---
-    fusion = BiCMAFusion(embed_dim=embed_dim, num_iters=2).to(
+    fusion = BiCMAFusion(embed_dim=embed_dim, num_iters=1).to(
         device=device, dtype=dtype
     )
 
