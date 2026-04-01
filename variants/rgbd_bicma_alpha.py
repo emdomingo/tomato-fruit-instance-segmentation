@@ -97,6 +97,9 @@ class BiCMAFusion(nn.Module):
         Returns:
             (B, N, C) depth-informed RGB tokens (ready for Swin stages)
         """
+
+        alpha = 0.1
+
         for _ in range(self.num_iters):
             # === Step 1: Depth-guided RGB update ===
             # Compute depth self-similarity: how similar is each depth
@@ -111,9 +114,13 @@ class BiCMAFusion(nn.Module):
             # average. Effect: RGB patches that correspond to similar depth
             # regions get mixed together.
             # Result: rgb_tokens is now a depth-informed mixture of RGB features.
-            rgb_tokens = torch.bmm(
-                torch.softmax(depth_sim, dim=-1), rgb_tokens
-            )
+            attn_depth = torch.softmax(depth_sim, dim=-1)
+
+            # compute update (DO NOT overwrite yet)
+            rgb_update = torch.bmm(attn_depth, rgb_tokens)
+
+            # residual blend
+            rgb_tokens = (1 - alpha) * rgb_tokens + alpha * rgb_update
 
             # === Step 2: RGB-guided Depth update ===
             # Same logic in reverse: use RGB similarity to re-weight
@@ -124,9 +131,14 @@ class BiCMAFusion(nn.Module):
             rgb_sim = torch.bmm(
                 rgb_tokens, rgb_tokens.transpose(1, 2)
             ) * self.scale
-            depth_tokens = torch.bmm(
-                torch.softmax(rgb_sim, dim=-1), depth_tokens
-            )
+
+            attn_rgb = torch.softmax(rgb_sim, dim=-1)
+
+            # compute update
+            depth_update = torch.bmm(attn_rgb, depth_tokens)
+
+            # residual blend
+            depth_tokens = (1 - alpha) * depth_tokens + alpha * depth_update
 
         # Only return the RGB tokens — the depth stream has served its
         # purpose by informing the RGB features. The Swin Transformer
