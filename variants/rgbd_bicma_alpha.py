@@ -64,12 +64,20 @@ logger = logging.getLogger(__name__)
 # ===================================================================
 
 class BiCMAFusion(nn.Module):
-    """Parameter-free bidirectional cross-modal attention fusion.
+    """Bidirectional cross-modal attention fusion with learnable blend rates.
 
     Uses each modality's self-similarity matrix (softmax-normalized)
-    to re-weight the other modality's token sequence. This module has
-    NO learnable parameters — the fusion is purely based on token
-    similarity, making it lightweight and not prone to overfitting.
+    to re-weight the other modality's token sequence. Each stream has
+    its own learnable scalar alpha (sigmoid-gated) that controls how
+    much of the cross-modal update to mix in:
+
+        X_rgb  = (1 - alpha_rgb)   * X_rgb  + alpha_rgb   * update_rgb
+        X_D    = (1 - alpha_depth) * X_D    + alpha_depth * update_D
+
+    Separate alphas allow the model to learn that RGB (which carries
+    pretrained ImageNet features) needs more conservative fusion than
+    depth (which starts from averaged RGB filters with no task-relevant
+    pretraining). Both are initialized so sigmoid gives ~0.1.
 
     The fusion is "bidirectional" because information flows both ways:
       1. Depth → RGB: depth similarity guides which RGB tokens to mix
@@ -87,6 +95,11 @@ class BiCMAFusion(nn.Module):
         # Without this, softmax would produce near-one-hot distributions,
         # causing gradient vanishing.
         self.scale = embed_dim ** -0.5
+        # Learnable blend rates, one per stream. Initialized to -2.2 so
+        # sigmoid(-2.2) ≈ 0.1 — conservative start that protects pretrained
+        # RGB features while still allowing the model to open up fusion.
+        self.alpha_rgb   = nn.Parameter(torch.tensor(-2.2))
+        self.alpha_depth = nn.Parameter(torch.tensor(-2.2))
 
     def forward(self, rgb_tokens, depth_tokens):
         """
@@ -97,8 +110,8 @@ class BiCMAFusion(nn.Module):
         Returns:
             (B, N, C) depth-informed RGB tokens (ready for Swin stages)
         """
-
-        alpha = 0.1
+        alpha_rgb   = torch.sigmoid(self.alpha_rgb)
+        alpha_depth = torch.sigmoid(self.alpha_depth)
 
         for _ in range(self.num_iters):
             # === Step 1: Depth-guided RGB update ===
@@ -113,14 +126,13 @@ class BiCMAFusion(nn.Module):
             # Softmax normalizes each row to sum to 1, creating a weighted
             # average. Effect: RGB patches that correspond to similar depth
             # regions get mixed together.
-            # Result: rgb_tokens is now a depth-informed mixture of RGB features.
             attn_depth = torch.softmax(depth_sim, dim=-1)
 
             # compute update (DO NOT overwrite yet)
             rgb_update = torch.bmm(attn_depth, rgb_tokens)
 
-            # residual blend
-            rgb_tokens = (1 - alpha) * rgb_tokens + alpha * rgb_update
+            # residual blend — alpha_rgb learned separately from depth
+            rgb_tokens = (1 - alpha_rgb) * rgb_tokens + alpha_rgb * rgb_update
 
             # === Step 2: RGB-guided Depth update ===
             # Same logic in reverse: use RGB similarity to re-weight
@@ -137,8 +149,8 @@ class BiCMAFusion(nn.Module):
             # compute update
             depth_update = torch.bmm(attn_rgb, depth_tokens)
 
-            # residual blend
-            depth_tokens = (1 - alpha) * depth_tokens + alpha * depth_update
+            # residual blend — alpha_depth learned separately from rgb
+            depth_tokens = (1 - alpha_depth) * depth_tokens + alpha_depth * depth_update
 
         # Only return the RGB tokens — the depth stream has served its
         # purpose by informing the RGB features. The Swin Transformer
@@ -274,7 +286,7 @@ def update_model(model, cfg):
         better than random init because the pretrained filters already
         encode useful low-level features (edges, textures). Averaging
         across RGB gives a reasonable grayscale-like filter.
-      - BiCMA fusion: no weights to initialize (parameter-free)
+      - BiCMA fusion: alpha_rgb and alpha_depth initialized to sigmoid(-2.2) ≈ 0.1
     """
     # Get the PatchEmbed class from the existing instance, so we create
     # new instances of the exact same class (handles any subclassing).
@@ -319,7 +331,7 @@ def update_model(model, cfg):
     if hasattr(old_pe, "norm") and old_pe.norm is not None:
         patch_embed_depth.norm.load_state_dict(old_pe.norm.state_dict())
 
-    # --- BiCMA fusion module (parameter-free) ---
+    # --- BiCMA fusion module ---
     # num_iters=1 means one round of bidirectional cross-modal attention.
     # More iterations would allow deeper cross-modal interaction but
     # increase computation (quadratic in the number of tokens).
