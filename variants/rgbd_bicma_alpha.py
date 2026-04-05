@@ -87,7 +87,7 @@ class BiCMAFusion(nn.Module):
     cross-modal interaction, though the default is 1 iteration.
     """
 
-    def __init__(self, embed_dim, num_iters=1):
+    def __init__(self, embed_dim, num_iters=2):
         super().__init__()
         self.num_iters = num_iters
         # Scaling factor 1/sqrt(C) to prevent dot products from becoming
@@ -335,7 +335,7 @@ def update_model(model, cfg):
     # num_iters=1 means one round of bidirectional cross-modal attention.
     # More iterations would allow deeper cross-modal interaction but
     # increase computation (quadratic in the number of tokens).
-    fusion = BiCMAFusion(embed_dim=embed_dim, num_iters=1).to(
+    fusion = BiCMAFusion(embed_dim=embed_dim, num_iters=2).to(
         device=device, dtype=dtype
     )
 
