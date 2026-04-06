@@ -335,7 +335,7 @@ def update_model(model, cfg):
     # num_iters=1 means one round of bidirectional cross-modal attention.
     # More iterations would allow deeper cross-modal interaction but
     # increase computation (quadratic in the number of tokens).
-    fusion = BiCMAFusion(embed_dim=embed_dim, num_iters=2).to(
+    fusion = BiCMAFusion(embed_dim=embed_dim, num_iters=3).to(
         device=device, dtype=dtype
     )
 
