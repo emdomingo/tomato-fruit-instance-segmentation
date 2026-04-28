@@ -231,6 +231,18 @@ class Rob2PhenoTrainer(DefaultTrainer):
     # Set by main() before training starts — allows variant to inject custom mappers
     _custom_mapper = None
     _custom_test_mapper = None
+    _variant = None
+
+    @classmethod
+    def build_model(cls, cfg):
+        # Apply the variant's update_model BEFORE the optimizer is built
+        # (DefaultTrainer.__init__ calls build_model then build_optimizer),
+        # so any new parameters the variant adds are picked up by the
+        # optimizer's named_modules() walk in build_optimizer.
+        model = super().build_model(cfg)
+        if cls._variant is not None:
+            model = cls._variant.update_model(model, cfg)
+        return model
 
     @classmethod
     def build_train_loader(cls, cfg):
@@ -398,6 +410,7 @@ def main():
     custom_test_mapper = variant.get_mapper(cfg, is_train=False)
     Rob2PhenoTrainer._custom_mapper = custom_mapper
     Rob2PhenoTrainer._custom_test_mapper = custom_test_mapper
+    Rob2PhenoTrainer._variant = variant
 
     # 6. Eval-only mode
     if args.eval_only:
@@ -422,16 +435,13 @@ def main():
                 logger.info(f"  {name}: {value:.1f}")
         return
 
-    # 7. Build trainer (constructs model internally)
+    # 7. Build trainer (constructs model internally; build_model applies the variant)
     trainer = Rob2PhenoTrainer(cfg)
 
-    # 8. Let variant modify model after construction, before weight loading
-    trainer.model = variant.update_model(trainer.model, cfg)
-
-    # 9. Load weights
+    # 8. Load weights
     trainer.resume_or_load(resume=args.resume)
 
-    # 10. Train
+    # 9. Train
     trainer.train()
 
 
