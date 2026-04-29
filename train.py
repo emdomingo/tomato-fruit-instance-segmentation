@@ -303,7 +303,14 @@ class Rob2PhenoTrainer(DefaultTrainer):
                 memo.add(value)
 
                 hyperparams = copy.copy(defaults)
-                if "backbone" in module_name:
+                # New variant modules (freshly initialized, not pretrained) live
+                # under backbone.* but should train at full base LR, not the
+                # 0.1x backbone multiplier intended for pretrained Swin weights.
+                is_new_variant_module = any(
+                    s in module_name
+                    for s in ("fusion", "patch_embed_depth", "patch_embed_rgb")
+                )
+                if "backbone" in module_name and not is_new_variant_module:
                     hyperparams["lr"] = (
                         hyperparams["lr"] * cfg.SOLVER.BACKBONE_MULTIPLIER
                     )
