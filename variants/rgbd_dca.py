@@ -57,7 +57,10 @@ class DCAFusion(nn.Module):
 
         nn.init.xavier_uniform_(self.W_D1.weight)
         nn.init.xavier_uniform_(self.W_D2.weight)
-        nn.init.xavier_uniform_(self.W_I1.weight)
+        # Zero-init W_I1 so the fusion output is 0 at step 0; combined with
+        # the residual in forward(), the model starts identical to RGB-only
+        # and learns the depth contribution gradually.
+        nn.init.zeros_(self.W_I1.weight)
 
     def forward(self, rgb_tokens, depth_tokens):
         """
@@ -73,7 +76,7 @@ class DCAFusion(nn.Module):
 
         attn_logits = torch.bmm(Q, K.transpose(1, 2)) * self.scale  # (B, N, N)
         attn = torch.softmax(attn_logits, dim=-1)
-        return torch.bmm(attn, V)              # (B, N, C)
+        return rgb_tokens + torch.bmm(attn, V)  # residual + (B, N, C)
 
 
 # ===================================================================
