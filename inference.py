@@ -110,7 +110,7 @@ def prepare_input(image_path, variant_name, cfg):
     # BGR for detectron2
     rgb_bgr = rgb[:, :, ::-1]
 
-    if variant_name in ("rgbd_early", "rgbd_bicma", "rgbd_bicma_alpha"):
+    if variant_name in ("rgbd_early", "rgbd_bicma", "rgbd_bicma_alpha", "rgbd_dca", "rgbd_dca_1iter"):
         # Derive depth path
         p = Path(image_path)
         depth_name = p.name.replace("_RGB.tiff", "_DEPTH.tiff")
