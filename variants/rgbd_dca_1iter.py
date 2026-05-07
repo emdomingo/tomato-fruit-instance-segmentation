@@ -35,50 +35,31 @@ logger = logging.getLogger(__name__)
 
 
 # ===================================================================
-# DCA Fusion Module (3-step iterative bidirectional)
+# Fusion
 # ===================================================================
 
 class DCAFusion(nn.Module):
-    """Three-step iterative bidirectional cross-modal fusion.
-
-    Step 1: depth     guides rgb        -> rgb_1
-    Step 2: rgb_1     guides depth      -> depth_1
-    Step 3: depth_1   guides rgb_1      -> rgb_2
-
-    No weight sharing -- each step has its own Q/K/V projections.
-
-    Naming convention (matches single-pass DCAFusion):
-        W_D# = projection applied to depth tokens
-        W_I# = projection applied to RGB (image) tokens
-    """
 
     def __init__(self, embed_dim):
         super().__init__()
         self.scale = embed_dim ** -0.5
 
-        # -------- Step 1: depth guides rgb --------
-        # depth -> Q, K
+        # 1 Depth (D) Guides RGB (I)
         self.W_D1 = nn.Linear(embed_dim, embed_dim, bias=False)
         self.W_D2 = nn.Linear(embed_dim, embed_dim, bias=False)
-        # rgb -> V
         self.W_I1 = nn.Linear(embed_dim, embed_dim, bias=False)
 
-        # -------- Step 2: rgb guides depth --------
-        # rgb -> Q, K
+        # 2 RGB Guides Depth
         self.W_I2 = nn.Linear(embed_dim, embed_dim, bias=False)
         self.W_I3 = nn.Linear(embed_dim, embed_dim, bias=False)
-        # depth -> V
         self.W_D3 = nn.Linear(embed_dim, embed_dim, bias=False)
 
-        # -------- Step 3: depth guides rgb (fresh weights) --------
-        # depth -> Q, K
+        # 3 Depth Guides RGB
         self.W_D4 = nn.Linear(embed_dim, embed_dim, bias=False)
         self.W_D5 = nn.Linear(embed_dim, embed_dim, bias=False)
-        # rgb -> V
         self.W_I4 = nn.Linear(embed_dim, embed_dim, bias=False)
 
-        # ---- Init: Xavier on Q/K projections, zeros on V projections ----
-        # Q, K: standard variance-preserving init.
+        # Initializing Weights - Xavier for 
         nn.init.xavier_uniform_(self.W_D1.weight)  # step 1 Q
         nn.init.xavier_uniform_(self.W_D2.weight)  # step 1 K
         nn.init.xavier_uniform_(self.W_I2.weight)  # step 2 Q
@@ -86,9 +67,7 @@ class DCAFusion(nn.Module):
         nn.init.xavier_uniform_(self.W_D4.weight)  # step 3 Q
         nn.init.xavier_uniform_(self.W_D5.weight)  # step 3 K
 
-        # V projections zero-initialized so each fusion step is identity at
-        # step 0. With residuals, the whole stack starts as RGB-only and
-        # depth-only, with all cross-modal contributions learned gradually.
+        # Zero Init for Values
         nn.init.zeros_(self.W_I1.weight)  # step 1 V
         nn.init.zeros_(self.W_D3.weight)  # step 2 V
         nn.init.zeros_(self.W_I4.weight)  # step 3 V
@@ -103,15 +82,15 @@ class DCAFusion(nn.Module):
             depth_1: (B, N, C) -- once-refined depth
         """
 
-        # ============ Step 1: depth guides rgb ============
+        # D guides RGB
         Q = self.W_D1(depth_tokens)                                    # (B, N, C)
         K = self.W_D2(depth_tokens)                                    # (B, N, C)
         V = self.W_I1(rgb_tokens)                                      # (B, N, C)
         attn_logits = torch.bmm(Q, K.transpose(1, 2)) * self.scale     # (B, N, N)
-        attn = torch.softmax(attn_logits, dim=-1)
+        attn = torch.softmax(attn_logits, dim=-1) # apply row-wise
         rgb_1 = rgb_tokens + torch.bmm(attn, V)                        # (B, N, C)
 
-        # ============ Step 2: rgb_1 guides depth ============
+        # RGB guides Depth
         Q = self.W_I2(rgb_1)                                           # (B, N, C)
         K = self.W_I3(rgb_1)                                           # (B, N, C)
         V = self.W_D3(depth_tokens)                                    # (B, N, C)
@@ -119,7 +98,7 @@ class DCAFusion(nn.Module):
         attn = torch.softmax(attn_logits, dim=-1)
         depth_1 = depth_tokens + torch.bmm(attn, V)                    # (B, N, C)
 
-        # ============ Step 3: depth_1 guides rgb_1 ============
+        # D guides RGB
         Q = self.W_D4(depth_1)                                         # (B, N, C)
         K = self.W_D5(depth_1)                                         # (B, N, C)
         V = self.W_I4(rgb_1)                                           # (B, N, C)
