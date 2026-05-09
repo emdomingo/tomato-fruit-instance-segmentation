@@ -33,4 +33,6 @@ python -W ignore::FutureWarning train.py \
     --batch-size ${BATCH_SIZE:-4} \
     --lr ${LR:-2e-4} \
     --max-iter ${MAX_ITER:-5000} \
-    --num-workers 8
+    --num-workers 8 \
+    ${DCA_ITERS:+--dca-iters $DCA_ITERS} \
+    ${DCA_HEADS:+--dca-heads $DCA_HEADS}
