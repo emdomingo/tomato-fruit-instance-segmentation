@@ -1,25 +1,21 @@
-"""RGB-D Depth-guided Cross-Attention (DCA) variant.
+"""RGB-D Multi-Head Depth-guided Cross-Attention (DCA) variant.
 
-Parameterized by `num_iters` (K). Always starts with one depth-guided RGB
-update, then optionally runs K bidirectional refinement cycles. No weight
-sharing across the initial step or any iter block.
+Multi-head version of `rgbd_dca`. Each `_attend` call splits Q/K/V across
+H heads (default H=4), runs scaled dot-product per head, concatenates, and
+applies a learnable output projection W_O. W_O is zero-initialized so the
+fused contribution starts at 0 and the model begins identical to RGB-only
+(same warm-start property as the single-head variant).
 
-    Initial:                  D guides RGB        -> rgb_0
-    Iter k (1..K):  rgb_{k-1} guides depth_{k-1}  -> depth_k
-                    depth_k   guides rgb_{k-1}    -> rgb_k
-
-Only the RGB stream feeds into the Swin Transformer stages; the refined
-depth stream is discarded after fusion.
-
-K=0 reproduces the single-step DCA (one D->I attention).
-K=1 reproduces the prior 3-step iterative bidirectional DCA.
+Like `rgbd_dca`, parameterized by `num_iters` (K). Initial step is `D->I`;
+each iter k=1..K adds `I->D` then `D->I`. Only the RGB stream feeds into
+the Swin Transformer stages.
 
 Architecture:
   Input (B, 4, H, W)
     |- RGB (B, 3, H, W)   -> patch_embed_rgb   -> (B, N, C) rgb_tokens
     `- Depth (B, 1, H, W) -> patch_embed_depth -> (B, N, C) depth_tokens
                                   |
-                          DCAFusion (1 + 2K attention steps)
+                          DCAMultiHeadFusion (H heads, 1 + 2K attn steps)
                                   |
                           rgb_K (B, N, C)
                                   |
@@ -42,58 +38,72 @@ logger = logging.getLogger(__name__)
 # ===================================================================
 
 class _IterBlock(nn.Module):
-    """One bidirectional refinement cycle: I->D, then D->I."""
+    """One bidirectional refinement cycle: I->D, then D->I (multi-head)."""
 
-    def __init__(self, embed_dim):
+    def __init__(self, embed_dim, num_heads):
         super().__init__()
         # I guides D
         self.W_Iq = nn.Linear(embed_dim, embed_dim, bias=False)
         self.W_Ik = nn.Linear(embed_dim, embed_dim, bias=False)
         self.W_Dv = nn.Linear(embed_dim, embed_dim, bias=False)
+        self.W_O_iD = nn.Linear(embed_dim, embed_dim, bias=False)
         # D guides I
         self.W_Dq = nn.Linear(embed_dim, embed_dim, bias=False)
         self.W_Dk = nn.Linear(embed_dim, embed_dim, bias=False)
         self.W_Iv = nn.Linear(embed_dim, embed_dim, bias=False)
+        self.W_O_dI = nn.Linear(embed_dim, embed_dim, bias=False)
 
-        nn.init.xavier_uniform_(self.W_Iq.weight)
-        nn.init.xavier_uniform_(self.W_Ik.weight)
-        nn.init.xavier_uniform_(self.W_Dq.weight)
-        nn.init.xavier_uniform_(self.W_Dk.weight)
-        # Zero-init values so each iter starts as a no-op.
-        nn.init.zeros_(self.W_Dv.weight)
-        nn.init.zeros_(self.W_Iv.weight)
+        for L in (self.W_Iq, self.W_Ik, self.W_Dv,
+                  self.W_Dq, self.W_Dk, self.W_Iv):
+            nn.init.xavier_uniform_(L.weight)
+        # Zero-init output projections so each iter starts as a no-op.
+        nn.init.zeros_(self.W_O_iD.weight)
+        nn.init.zeros_(self.W_O_dI.weight)
 
 
-class DCAFusion(nn.Module):
+class DCAMultiHeadFusion(nn.Module):
 
-    def __init__(self, embed_dim, num_iters=0):
+    def __init__(self, embed_dim, num_heads=4, num_iters=0):
         super().__init__()
-        self.scale = embed_dim ** -0.5
+        assert embed_dim % num_heads == 0, (
+            f"embed_dim={embed_dim} not divisible by num_heads={num_heads}"
+        )
+        self.num_heads = num_heads
+        self.head_dim = embed_dim // num_heads
+        self.scale = self.head_dim ** -0.5
         self.num_iters = num_iters
 
         # Initial D guides RGB
         self.W_D1 = nn.Linear(embed_dim, embed_dim, bias=False)
         self.W_D2 = nn.Linear(embed_dim, embed_dim, bias=False)
         self.W_I1 = nn.Linear(embed_dim, embed_dim, bias=False)
+        self.W_O_init = nn.Linear(embed_dim, embed_dim, bias=False)
 
-        nn.init.xavier_uniform_(self.W_D1.weight)
-        nn.init.xavier_uniform_(self.W_D2.weight)
-        # Zero-init W_I1 so the initial fusion output is 0; combined with the
+        for L in (self.W_D1, self.W_D2, self.W_I1):
+            nn.init.xavier_uniform_(L.weight)
+        # Zero-init W_O so the initial fusion output is 0; combined with the
         # residual in _attend(), the model starts identical to RGB-only and
         # learns the depth contribution gradually.
-        nn.init.zeros_(self.W_I1.weight)
+        nn.init.zeros_(self.W_O_init.weight)
 
         self.iter_blocks = nn.ModuleList([
-            _IterBlock(embed_dim) for _ in range(num_iters)
+            _IterBlock(embed_dim, num_heads) for _ in range(num_iters)
         ])
 
-    def _attend(self, Q_src, K_src, V_src, Wq, Wk, Wv, residual):
-        Q = Wq(Q_src)
-        K = Wk(K_src)
-        V = Wv(V_src)
-        attn_logits = torch.bmm(Q, K.transpose(1, 2)) * self.scale
+    def _attend(self, Q_src, K_src, V_src, Wq, Wk, Wv, Wo, residual):
+        B, N, C = Q_src.shape
+        H, d = self.num_heads, self.head_dim
+
+        Q = Wq(Q_src).view(B, N, H, d).transpose(1, 2)  # (B, H, N, d)
+        K = Wk(K_src).view(B, N, H, d).transpose(1, 2)
+        V = Wv(V_src).view(B, N, H, d).transpose(1, 2)
+
+        attn_logits = torch.matmul(Q, K.transpose(-2, -1)) * self.scale  # (B, H, N, N)
         attn = torch.softmax(attn_logits, dim=-1)
-        return residual + torch.bmm(attn, V)
+        out = torch.matmul(attn, V)                                       # (B, H, N, d)
+
+        out = out.transpose(1, 2).contiguous().view(B, N, C)
+        return residual + Wo(out)
 
     def forward(self, rgb_tokens, depth_tokens):
         """
@@ -106,7 +116,7 @@ class DCAFusion(nn.Module):
         """
         rgb = self._attend(
             depth_tokens, depth_tokens, rgb_tokens,
-            self.W_D1, self.W_D2, self.W_I1,
+            self.W_D1, self.W_D2, self.W_I1, self.W_O_init,
             residual=rgb_tokens,
         )
         depth = depth_tokens
@@ -114,12 +124,12 @@ class DCAFusion(nn.Module):
         for block in self.iter_blocks:
             depth = self._attend(
                 rgb, rgb, depth,
-                block.W_Iq, block.W_Ik, block.W_Dv,
+                block.W_Iq, block.W_Ik, block.W_Dv, block.W_O_iD,
                 residual=depth,
             )
             rgb = self._attend(
                 depth, depth, rgb,
-                block.W_Dq, block.W_Dk, block.W_Iv,
+                block.W_Dq, block.W_Dk, block.W_Iv, block.W_O_dI,
                 residual=rgb,
             )
 
@@ -176,7 +186,7 @@ def update_config(cfg):
 
 
 def update_model(model, cfg):
-    """Replace the single PatchEmbed with dual streams + DCA fusion."""
+    """Replace the single PatchEmbed with dual streams + multi-head DCA fusion."""
     PatchEmbed = type(model.backbone.patch_embed)
 
     backbone = model.backbone
@@ -209,9 +219,10 @@ def update_model(model, cfg):
         patch_embed_depth.norm.load_state_dict(old_pe.norm.state_dict())
 
     num_iters = getattr(cfg.MODEL, "DCA_ITERS", 0)
-    fusion = DCAFusion(embed_dim=embed_dim, num_iters=num_iters).to(
-        device=device, dtype=dtype
-    )
+    num_heads = getattr(cfg.MODEL, "DCA_HEADS", 4)
+    fusion = DCAMultiHeadFusion(
+        embed_dim=embed_dim, num_heads=num_heads, num_iters=num_iters,
+    ).to(device=device, dtype=dtype)
 
     backbone.patch_embed_rgb = patch_embed_rgb
     backbone.patch_embed_depth = patch_embed_depth
@@ -221,9 +232,11 @@ def update_model(model, cfg):
     backbone.forward = types.MethodType(_dca_forward, backbone)
 
     logger.info(
-        "DCA variant (K=%d iters): dual PatchEmbed (rgb=3-ch, depth=1-ch) "
-        "+ %d-step depth-guided cross-attention at embed_dim=%d",
-        num_iters, 1 + 2 * num_iters, embed_dim,
+        "DCA-MHA variant (H=%d heads, K=%d iters): dual PatchEmbed "
+        "(rgb=3-ch, depth=1-ch) + %d-step multi-head depth-guided "
+        "cross-attention at embed_dim=%d (head_dim=%d)",
+        num_heads, num_iters, 1 + 2 * num_iters, embed_dim,
+        embed_dim // num_heads,
     )
     return model
 
