@@ -209,8 +209,20 @@ def build_cfg(args):
     cfg.INPUT.MIN_SIZE_TEST = 512
     cfg.DATALOADER.NUM_WORKERS = args.num_workers
 
+    # -- Variant-specific config --
+    cfg.MODEL.DCA_ITERS = args.dca_iters
+    cfg.MODEL.DCA_HEADS = args.dca_heads
+
     # -- Output --
-    cfg.OUTPUT_DIR = str(PROJECT_ROOT / "output" / f"{args.variant}_swin_tiny")
+    if args.variant == "rgbd_dca_multihead":
+        suffix = f"_h{args.dca_heads}_iter{args.dca_iters}"
+    elif args.variant.startswith("rgbd_dca"):
+        suffix = f"_iter{args.dca_iters}"
+    else:
+        suffix = ""
+    cfg.OUTPUT_DIR = str(
+        PROJECT_ROOT / "output" / f"{args.variant}{suffix}_swin_tiny"
+    )
 
     return cfg
 
@@ -376,6 +388,16 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--max-iter", type=int, default=5000)
     parser.add_argument("--num-workers", type=int, default=4)
+    parser.add_argument(
+        "--dca-iters", type=int, default=0,
+        help="K bidirectional refinement cycles after the initial D->I step "
+             "(rgbd_dca variant only; ignored otherwise).",
+    )
+    parser.add_argument(
+        "--dca-heads", type=int, default=4,
+        help="Number of attention heads for rgbd_dca_multihead "
+             "(must divide embed_dim; ignored otherwise).",
+    )
     parser.add_argument(
         "--resume", action="store_true",
         help="Resume from last checkpoint",
