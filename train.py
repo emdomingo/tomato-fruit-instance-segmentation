@@ -221,7 +221,7 @@ def build_cfg(args):
     else:
         suffix = ""
     if args.green_weight != 1.0:
-        suffix += f"_gw{args.green_weight}"
+        suffix += f"_gw{str(args.green_weight).replace('.', '_')}"
     suffix += f"_mi{args.max_iter}"
     cfg.OUTPUT_DIR = str(
         PROJECT_ROOT / "output" / f"{args.variant}{suffix}_swin_tiny"
@@ -404,7 +404,8 @@ def parse_args():
     parser.add_argument(
         "--green-weight", type=float, default=1.0,
         help="Per-class CE weight for greenfruit (class id 1). 1.0 = no change. "
-             "Values >1 prioritize greenfruit; auto-appends '_gw{val}' to OUTPUT_DIR.",
+             "Values >1 prioritize greenfruit; auto-appends '_gw{val}' to OUTPUT_DIR "
+             "(dots replaced with underscores, e.g. 2.0 -> '_gw2_0').",
     )
     parser.add_argument(
         "--resume", action="store_true",
