@@ -35,4 +35,5 @@ python -W ignore::FutureWarning train.py \
     --max-iter ${MAX_ITER:-5000} \
     --num-workers 8 \
     ${DCA_ITERS:+--dca-iters $DCA_ITERS} \
-    ${DCA_HEADS:+--dca-heads $DCA_HEADS}
+    ${DCA_HEADS:+--dca-heads $DCA_HEADS} \
+    ${GREEN_WEIGHT:+--green-weight $GREEN_WEIGHT}

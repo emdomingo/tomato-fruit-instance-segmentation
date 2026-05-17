@@ -220,6 +220,9 @@ def build_cfg(args):
         suffix = f"_iter{args.dca_iters}"
     else:
         suffix = ""
+    if args.green_weight != 1.0:
+        suffix += f"_gw{args.green_weight}"
+    suffix += f"_mi{args.max_iter}"
     cfg.OUTPUT_DIR = str(
         PROJECT_ROOT / "output" / f"{args.variant}{suffix}_swin_tiny"
     )
@@ -399,6 +402,11 @@ def parse_args():
              "(must divide embed_dim; ignored otherwise).",
     )
     parser.add_argument(
+        "--green-weight", type=float, default=1.0,
+        help="Per-class CE weight for greenfruit (class id 1). 1.0 = no change. "
+             "Values >1 prioritize greenfruit; auto-appends '_gw{val}' to OUTPUT_DIR.",
+    )
+    parser.add_argument(
         "--resume", action="store_true",
         help="Resume from last checkpoint",
     )
@@ -412,6 +420,29 @@ def parse_args():
 # ===========================================================================
 # Main
 # ===========================================================================
+
+def _apply_class_weights(trainer, green_weight, no_object_weight):
+    """Overwrite SetCriterion.empty_weight to up-weight greenfruit (class id 1)."""
+    if green_weight == 1.0:
+        return
+    model = trainer.model
+    inner = model.module if hasattr(model, "module") else model
+    criterion = inner.criterion
+    new_weights = torch.tensor(
+        [1.0, green_weight, no_object_weight],
+        device=criterion.empty_weight.device,
+        dtype=criterion.empty_weight.dtype,
+    )
+    assert new_weights.shape == criterion.empty_weight.shape, (
+        f"empty_weight shape mismatch: got {criterion.empty_weight.shape}, "
+        f"built {new_weights.shape}"
+    )
+    criterion.empty_weight.copy_(new_weights)
+    logging.getLogger("mask2former").info(
+        f"[class-weight] empty_weight set to {new_weights.tolist()} "
+        f"(red, green, no-obj)"
+    )
+
 
 def main():
     args = parse_args()
@@ -467,10 +498,16 @@ def main():
     # 7. Build trainer (constructs model internally; build_model applies the variant)
     trainer = Rob2PhenoTrainer(cfg)
 
-    # 8. Load weights
+    # 8. Apply per-class CE weights (must happen before resume_or_load so the
+    #    overridden empty_weight buffer gets saved into new checkpoints)
+    _apply_class_weights(
+        trainer, args.green_weight, cfg.MODEL.MASK_FORMER.NO_OBJECT_WEIGHT
+    )
+
+    # 9. Load weights
     trainer.resume_or_load(resume=args.resume)
 
-    # 9. Train
+    # 10. Train
     trainer.train()
 
 
