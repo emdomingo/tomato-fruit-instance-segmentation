@@ -160,6 +160,34 @@ def register_datasets():
     )
 
 
+def register_papple():
+    """Register PApple train/val/test datasets with Detectron2.
+
+    PApple is converted to a 1-class ("fruit") COCO file by
+    data/PApple/scripts/convert_annotations.py and shares the same COCO
+    schema as Rob2Pheno, so we can reuse `load_rob2pheno` directly.
+    """
+    data_root = PROJECT_ROOT / "data" / "PApple"
+    rgb_dir = data_root / "RGB"
+    splits = {
+        "papple_train": data_root / "train_1class.JSON",
+        "papple_val": data_root / "val_1class.JSON",
+        "papple_test": data_root / "test_1class.JSON",
+    }
+    thing_classes = ["fruit"]
+    for name, jpath in splits.items():
+        if name in DatasetCatalog.list():
+            DatasetCatalog.remove(name)
+            MetadataCatalog.remove(name)
+        DatasetCatalog.register(
+            name,
+            lambda j=str(jpath), r=str(rgb_dir): load_rob2pheno(j, r),
+        )
+        MetadataCatalog.get(name).set(
+            thing_classes=thing_classes, evaluator_type="coco",
+        )
+
+
 # ===========================================================================
 # Config construction
 # ===========================================================================
@@ -185,17 +213,24 @@ def build_cfg(args):
     cfg.MODEL.WEIGHTS = str(
         PROJECT_ROOT / "pretrained" / "mask2former_swin_tiny_coco_instance.pkl"
     )
-    cfg.MODEL.SEM_SEG_HEAD.NUM_CLASSES = 2  # redfruit, greenfruit
 
-    # -- Datasets --
-    cfg.DATASETS.TRAIN = ("rob2pheno_train",)
-    cfg.DATASETS.TEST = ("rob2pheno_val",)
+    # -- Datasets / classes (driven by --dataset) --
+    if args.dataset == "rob2pheno":
+        cfg.MODEL.SEM_SEG_HEAD.NUM_CLASSES = 2  # redfruit, greenfruit
+        cfg.DATASETS.TRAIN = ("rob2pheno_train",)
+        cfg.DATASETS.TEST = ("rob2pheno_val",)
+    elif args.dataset == "papple":
+        cfg.MODEL.SEM_SEG_HEAD.NUM_CLASSES = 1  # fruit
+        cfg.DATASETS.TRAIN = ("papple_train",)
+        cfg.DATASETS.TEST = ("papple_val",)
+    else:
+        raise ValueError(f"Unknown --dataset {args.dataset!r}")
 
     # -- Solver --
     cfg.SOLVER.IMS_PER_BATCH = args.batch_size
     cfg.SOLVER.BASE_LR = args.lr
     cfg.SOLVER.MAX_ITER = args.max_iter
-    cfg.SOLVER.STEPS = (3500, 4500)
+    cfg.SOLVER.STEPS = (int(0.7 * args.max_iter), int(0.9 * args.max_iter))
     cfg.SOLVER.GAMMA = 0.1
     cfg.SOLVER.WARMUP_ITERS = 200
     cfg.SOLVER.CHECKPOINT_PERIOD = 1000
@@ -223,8 +258,11 @@ def build_cfg(args):
     if args.green_weight != 1.0:
         suffix += f"_gw{str(args.green_weight).replace('.', '_')}"
     suffix += f"_mi{args.max_iter}"
+    if args.run_tag:
+        suffix += f"_{args.run_tag}"
+    dataset_tag = "" if args.dataset == "rob2pheno" else f"_{args.dataset}"
     cfg.OUTPUT_DIR = str(
-        PROJECT_ROOT / "output" / f"{args.variant}{suffix}_swin_tiny"
+        PROJECT_ROOT / "output" / f"{args.variant}{dataset_tag}{suffix}_swin_tiny"
     )
 
     return cfg
@@ -387,6 +425,12 @@ def parse_args():
         choices=list(VARIANTS.keys()),
         help="Input layer variant (default: rgb)",
     )
+    parser.add_argument(
+        "--dataset", type=str, default="rob2pheno",
+        choices=["rob2pheno", "papple"],
+        help="Which dataset to train on. Also drives NUM_CLASSES "
+             "(2 for rob2pheno, 1 for papple).",
+    )
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--max-iter", type=int, default=5000)
@@ -400,6 +444,11 @@ def parse_args():
         "--dca-heads", type=int, default=4,
         help="Number of attention heads for rgbd_dca_multihead "
              "(must divide embed_dim; ignored otherwise).",
+    )
+    parser.add_argument(
+        "--run-tag", type=str, default="",
+        help="Optional tag appended to OUTPUT_DIR to keep parallel runs separate "
+             "(e.g. --run-tag v2 -> '..._mi5000_v2_swin_tiny'). Empty = unchanged.",
     )
     parser.add_argument(
         "--green-weight", type=float, default=1.0,
@@ -426,6 +475,15 @@ def _apply_class_weights(trainer, green_weight, no_object_weight):
     """Overwrite SetCriterion.empty_weight to up-weight greenfruit (class id 1)."""
     if green_weight == 1.0:
         return
+    # green_weight is a Rob2Pheno-only concept (assumes class id 1 = greenfruit).
+    # Skip with a clear message when we're training on something else.
+    cfg = trainer.cfg
+    if cfg.MODEL.SEM_SEG_HEAD.NUM_CLASSES != 2:
+        logging.getLogger("mask2former").warning(
+            "[class-weight] --green-weight ignored: requires 2-class setup "
+            "(got NUM_CLASSES=%d)", cfg.MODEL.SEM_SEG_HEAD.NUM_CLASSES,
+        )
+        return
     model = trainer.model
     inner = model.module if hasattr(model, "module") else model
     criterion = inner.criterion
@@ -449,8 +507,9 @@ def main():
     args = parse_args()
     variant = VARIANTS[args.variant]
 
-    # 1. Register datasets
+    # 1. Register datasets (both registries; --dataset picks which is active)
     register_datasets()
+    register_papple()
 
     # 2. Build config
     cfg = build_cfg(args)
@@ -481,12 +540,13 @@ def main():
         DetectionCheckpointer(model).load(
             os.path.join(cfg.OUTPUT_DIR, "model_final.pth")
         )
+        test_name = cfg.DATASETS.TEST[0]
         if custom_test_mapper is not None:
-            val_loader = build_detection_test_loader(cfg, "rob2pheno_val", mapper=custom_test_mapper)
+            val_loader = build_detection_test_loader(cfg, test_name, mapper=custom_test_mapper)
         else:
-            val_loader = build_detection_test_loader(cfg, "rob2pheno_val")
+            val_loader = build_detection_test_loader(cfg, test_name)
         evaluator = COCOEvaluator(
-            "rob2pheno_val",
+            test_name,
             output_dir=os.path.join(cfg.OUTPUT_DIR, "eval_final"),
         )
         results = inference_on_dataset(model, val_loader, evaluator)
