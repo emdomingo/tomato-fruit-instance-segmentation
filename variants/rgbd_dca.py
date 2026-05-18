@@ -170,7 +170,7 @@ def _dca_forward(self, x):
 
 def update_config(cfg):
     """Extend PIXEL_MEAN and PIXEL_STD to 4 channels (RGB + depth)."""
-    depth_mean, depth_std = _compute_depth_stats()
+    depth_mean, depth_std = _compute_depth_stats(cfg)
     cfg.MODEL.PIXEL_MEAN = [123.675, 116.280, 103.530, depth_mean]
     cfg.MODEL.PIXEL_STD = [58.395, 57.120, 57.375, depth_std]
 

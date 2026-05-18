@@ -238,7 +238,7 @@ def update_config(cfg):
     The first 3 values are ImageNet RGB stats; the 4th is computed from
     the Rob2Pheno depth images.
     """
-    depth_mean, depth_std = _compute_depth_stats()
+    depth_mean, depth_std = _compute_depth_stats(cfg)
     cfg.MODEL.PIXEL_MEAN = [123.675, 116.280, 103.530, depth_mean]
     cfg.MODEL.PIXEL_STD = [58.395, 57.120, 57.375, depth_std]
 

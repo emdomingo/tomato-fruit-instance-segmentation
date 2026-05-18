@@ -41,17 +41,41 @@ from detectron2.structures import BitMasks, Instances, polygons_to_bitmask
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Depth statistics — lazily computed from Rob2Pheno Depth TIFFs
+# Depth statistics — lazily computed from training-split depth TIFFs
 # ---------------------------------------------------------------------------
 
-# Cache so we only scan the filesystem once per process.
+# Cache keyed by depth-dir path so we only scan once per process per dataset.
 # Both rgbd_early and rgbd_bicma call _compute_depth_stats(); the cache
 # ensures the (potentially slow) I/O only happens on the first call.
-_depth_stats_cache = None
+_depth_stats_cache: dict = {}
 
 
-def _compute_depth_stats():
-    """Compute mean/std of grayscale depth across all Rob2Pheno depth TIFFs.
+def _resolve_depth_dir(cfg=None):
+    """Return the Depth/ directory for the active training dataset.
+
+    If `cfg` is passed and `cfg.DATASETS.TRAIN[0]` is registered with a
+    loader (the usual case in train.py), peek at the first dataset record
+    and derive `<rgb_dir>/../Depth`. Falls back to Rob2Pheno when no cfg
+    is supplied — useful for ad-hoc calls / notebooks.
+    """
+    if cfg is not None:
+        try:
+            from detectron2.data import DatasetCatalog
+            ds_name = cfg.DATASETS.TRAIN[0]
+            records = DatasetCatalog.get(ds_name)
+            if records:
+                first = Path(records[0]["file_name"])
+                return first.parent.parent / "Depth"
+        except Exception:
+            pass
+    return (
+        Path(__file__).resolve().parent.parent
+        / "data" / "Rob2Pheno" / "Depth"
+    )
+
+
+def _compute_depth_stats(cfg=None):
+    """Compute mean/std of grayscale depth across the training depth TIFFs.
 
     Values are in [0, 255] range (8-bit grayscale), matching the scale of
     the RGB PIXEL_MEAN / PIXEL_STD values used by Detectron2's normalizer.
@@ -61,25 +85,21 @@ def _compute_depth_stats():
     So we need to provide the depth channel's mean and std in the same
     [0, 255] pixel-value scale that the RGB stats use.
 
-    NOTE (known issue): This computes stats over ALL 123 images (train + val)
-    rather than only the 83 training images, which leaks validation
-    information into training normalization. See CLAUDE.md "Known Issues".
+    NOTE (known issue): currently scans every TIFF in the Depth/ dir of the
+    active dataset, which on Rob2Pheno means train+val rather than train
+    only — see CLAUDE.md "Known Issues". On PApple, the Depth/ dir holds
+    all splits combined; restrict to training stems if/when this matters.
 
     Returns:
         (mean, std) tuple of floats in [0, 255] range.
     """
-    global _depth_stats_cache
-    if _depth_stats_cache is not None:
-        return _depth_stats_cache
-
     from PIL import Image
 
-    # Resolve the Depth directory relative to this file's location:
-    # variants/rgbd_early.py → project_root/data/Rob2Pheno/Depth/
-    depth_dir = (
-        Path(__file__).resolve().parent.parent
-        / "data" / "Rob2Pheno" / "Depth"
-    )
+    depth_dir = _resolve_depth_dir(cfg)
+    cached = _depth_stats_cache.get(str(depth_dir))
+    if cached is not None:
+        return cached
+
     paths = sorted(depth_dir.glob("*_DEPTH.tiff"))
     if not paths:
         raise FileNotFoundError(
@@ -107,12 +127,13 @@ def _compute_depth_stats():
     mean = running_sum / pixel_count
     std = np.sqrt(running_sq_sum / pixel_count - mean ** 2)
 
-    _depth_stats_cache = (float(mean), float(std))
+    result = (float(mean), float(std))
+    _depth_stats_cache[str(depth_dir)] = result
     logger.info(
-        "Depth stats (grayscale): mean=%.3f, std=%.3f (%d files)",
-        mean, std, len(paths),
+        "Depth stats (grayscale): mean=%.3f, std=%.3f (%d files in %s)",
+        mean, std, len(paths), depth_dir,
     )
-    return _depth_stats_cache
+    return result
 
 
 # ===================================================================
@@ -130,7 +151,7 @@ def update_config(cfg):
 
     This is called by train.py BEFORE the config is frozen.
     """
-    depth_mean, depth_std = _compute_depth_stats()
+    depth_mean, depth_std = _compute_depth_stats(cfg)
     cfg.MODEL.PIXEL_MEAN = [123.675, 116.280, 103.530, depth_mean]
     cfg.MODEL.PIXEL_STD = [58.395, 57.120, 57.375, depth_std]
 
