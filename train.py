@@ -242,6 +242,10 @@ def build_cfg(args):
     cfg.INPUT.MAX_SIZE_TEST = 640
     cfg.INPUT.MIN_SIZE_TRAIN = (480, 512, 544, 576, 608, 640)
     cfg.INPUT.MIN_SIZE_TEST = 512
+    # Force ResizeShortestEdge mapper for all variants so rgb trains at the same
+    # ~640px scale as the RGB-D variants (the base YAML's "coco_instance_lsj"
+    # default ignored MAX_SIZE_TRAIN and trained rgb at 1024x1024).
+    cfg.INPUT.DATASET_MAPPER_NAME = "mask_former_instance"
     cfg.DATALOADER.NUM_WORKERS = args.num_workers
 
     # -- Variant-specific config --
