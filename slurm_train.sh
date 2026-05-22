@@ -27,6 +27,16 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
+# K-fold CV: when submitted as an array job (sbatch --array=0-4 ... FOLDS=5),
+# use SLURM_ARRAY_TASK_ID as the fold index. Otherwise CV stays off.
+FOLD_ARGS=""
+if [ -n "$FOLDS" ] && [ -n "$SLURM_ARRAY_TASK_ID" ]; then
+    FOLD_ARGS="--folds $FOLDS --fold-index $SLURM_ARRAY_TASK_ID"
+    if [ -n "$CV_SEED" ]; then
+        FOLD_ARGS="$FOLD_ARGS --cv-seed $CV_SEED"
+    fi
+fi
+
 # Train
 python -W ignore::FutureWarning train.py \
     --variant ${VARIANT:-rgb} \
@@ -38,4 +48,6 @@ python -W ignore::FutureWarning train.py \
     ${DCA_ITERS:+--dca-iters $DCA_ITERS} \
     ${DCA_HEADS:+--dca-heads $DCA_HEADS} \
     ${GREEN_WEIGHT:+--green-weight $GREEN_WEIGHT} \
-    ${RUN_TAG:+--run-tag $RUN_TAG}
+    ${INPUT_MAX_SIZE:+--input-max-size $INPUT_MAX_SIZE} \
+    ${RUN_TAG:+--run-tag $RUN_TAG} \
+    $FOLD_ARGS

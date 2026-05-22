@@ -64,13 +64,14 @@ from mask2former import (
 # Variant registry
 # ---------------------------------------------------------------------------
 from variants import VARIANTS
+from cv_splits import make_kfold_splits
 
 
 # ===========================================================================
 # Dataset loading & registration
 # ===========================================================================
 
-def load_rob2pheno(json_path: str, image_root: str) -> list:
+def load_rob2pheno(json_path: str, image_root: str, keep_ids=None) -> list:
     """
     Load a Rob2Pheno COCO annotation file and return a list of Detectron2
     dataset dicts (one dict per image).
@@ -78,6 +79,8 @@ def load_rob2pheno(json_path: str, image_root: str) -> list:
     Args:
         json_path  : Path to the COCO JSON annotation file.
         image_root : Directory containing all the image files.
+        keep_ids   : Optional iterable of image_ids to retain. When None,
+                     all images in the JSON are loaded. Used for k-fold CV.
 
     Returns:
         List of dicts in Detectron2 format.
@@ -98,8 +101,11 @@ def load_rob2pheno(json_path: str, image_root: str) -> list:
     for ann in coco["annotations"]:
         img_to_anns[ann["image_id"]].append(ann)
 
+    keep = set(keep_ids) if keep_ids is not None else None
     dataset_dicts = []
     for img_entry in coco["images"]:
+        if keep is not None and img_entry["id"] not in keep:
+            continue
         record = {
             "file_name": str(image_root / img_entry["file_name"]),
             "image_id": img_entry["id"],
@@ -188,6 +194,43 @@ def register_papple():
         )
 
 
+def register_cv_fold(fold_idx: int, k: int, seed: int, stratify: bool):
+    """Register rob2pheno_fold_train / rob2pheno_fold_val by splitting train_2class.JSON.
+
+    The original rob2pheno_val (40-image held-out test set) is registered separately
+    by register_datasets() and remains identical across all folds.
+    """
+    if not (0 <= fold_idx < k):
+        raise ValueError(f"fold_idx={fold_idx} out of range for k={k}")
+
+    data_root = PROJECT_ROOT / "data" / "Rob2Pheno"
+    rgb_dir = data_root / "RGB"
+    train_json = data_root / "train_2class.JSON"
+    thing_classes = ["redfruit", "greenfruit"]
+
+    folds = make_kfold_splits(train_json, k=k, seed=seed, stratify=stratify)
+    train_ids, val_ids = folds[fold_idx]
+
+    for name, ids in [("rob2pheno_fold_train", train_ids), ("rob2pheno_fold_val", val_ids)]:
+        if name in DatasetCatalog.list():
+            DatasetCatalog.remove(name)
+            MetadataCatalog.remove(name)
+        DatasetCatalog.register(
+            name,
+            lambda j=str(train_json), r=str(rgb_dir), keep=tuple(ids):
+                load_rob2pheno(j, r, keep_ids=keep),
+        )
+        MetadataCatalog.get(name).set(
+            thing_classes=thing_classes, evaluator_type="coco",
+        )
+
+    print(
+        f"[cv] fold {fold_idx + 1}/{k} (seed={seed}, stratify={stratify}): "
+        f"{len(train_ids)} train / {len(val_ids)} fold-val images",
+        flush=True,
+    )
+
+
 # ===========================================================================
 # Config construction
 # ===========================================================================
@@ -217,8 +260,14 @@ def build_cfg(args):
     # -- Datasets / classes (driven by --dataset) --
     if args.dataset == "rob2pheno":
         cfg.MODEL.SEM_SEG_HEAD.NUM_CLASSES = 2  # redfruit, greenfruit
-        cfg.DATASETS.TRAIN = ("rob2pheno_train",)
-        cfg.DATASETS.TEST = ("rob2pheno_val",)
+        if args.folds > 0:
+            # K-fold CV: train on the fold's slice; evaluate BOTH the fold-val
+            # (in-fold validation) and rob2pheno_val (held-out test) each EVAL_PERIOD.
+            cfg.DATASETS.TRAIN = ("rob2pheno_fold_train",)
+            cfg.DATASETS.TEST = ("rob2pheno_fold_val", "rob2pheno_val")
+        else:
+            cfg.DATASETS.TRAIN = ("rob2pheno_train",)
+            cfg.DATASETS.TEST = ("rob2pheno_val",)
     elif args.dataset == "papple":
         cfg.MODEL.SEM_SEG_HEAD.NUM_CLASSES = 1  # fruit
         cfg.DATASETS.TRAIN = ("papple_train",)
@@ -238,10 +287,15 @@ def build_cfg(args):
     cfg.TEST.EVAL_PERIOD = 1000
 
     # -- Input --
-    cfg.INPUT.MAX_SIZE_TRAIN = 640
-    cfg.INPUT.MAX_SIZE_TEST = 640
-    cfg.INPUT.MIN_SIZE_TRAIN = (480, 512, 544, 576, 608, 640)
-    cfg.INPUT.MIN_SIZE_TEST = 512
+    max_size = args.input_max_size
+    min_lo = int(round(0.75 * max_size / 32)) * 32
+    raw_step = max(1, (max_size - min_lo) // 5)
+    step = max(32, ((raw_step + 31) // 32) * 32)
+    min_sizes = tuple(range(min_lo, max_size + 1, step))
+    cfg.INPUT.MAX_SIZE_TRAIN = max_size
+    cfg.INPUT.MAX_SIZE_TEST = max_size
+    cfg.INPUT.MIN_SIZE_TRAIN = min_sizes
+    cfg.INPUT.MIN_SIZE_TEST = int(round(0.8 * max_size / 32)) * 32
     # Force ResizeShortestEdge mapper for all variants so rgb trains at the same
     # ~640px scale as the RGB-D variants (the base YAML's "coco_instance_lsj"
     # default ignored MAX_SIZE_TRAIN and trained rgb at 1024x1024).
@@ -262,6 +316,10 @@ def build_cfg(args):
     if args.green_weight != 1.0:
         suffix += f"_gw{str(args.green_weight).replace('.', '_')}"
     suffix += f"_mi{args.max_iter}"
+    if args.input_max_size != 640:
+        suffix += f"_sz{args.input_max_size}"
+    if args.folds > 0:
+        suffix += f"_fold{args.fold_index}of{args.folds}_seed{args.cv_seed}"
     if args.run_tag:
         suffix += f"_{args.run_tag}"
     dataset_tag = "" if args.dataset == "rob2pheno" else f"_{args.dataset}"
@@ -440,6 +498,12 @@ def parse_args():
     parser.add_argument("--max-iter", type=int, default=5000)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument(
+        "--input-max-size", type=int, default=640,
+        help="Max image size for train+test. MIN_SIZE_TRAIN sweeps from "
+             "0.75*max..max in 5 steps; MIN_SIZE_TEST = 0.8*max. "
+             "Appends '_sz{val}' to OUTPUT_DIR when != 640.",
+    )
+    parser.add_argument(
         "--dca-iters", type=int, default=0,
         help="K bidirectional refinement cycles after the initial D->I step "
              "(rgbd_dca variant only; ignored otherwise).",
@@ -459,6 +523,29 @@ def parse_args():
         help="Per-class CE weight for greenfruit (class id 1). 1.0 = no change. "
              "Values >1 prioritize greenfruit; auto-appends '_gw{val}' to OUTPUT_DIR "
              "(dots replaced with underscores, e.g. 2.0 -> '_gw2_0').",
+    )
+    parser.add_argument(
+        "--folds", type=int, default=0,
+        help="K for k-fold CV on the train set. 0 (default) = no CV "
+             "(original single-split behavior). When >0, requires --fold-index; "
+             "only the rob2pheno dataset is supported.",
+    )
+    parser.add_argument(
+        "--fold-index", type=int, default=-1,
+        help="0-based fold index to train on. Required when --folds > 0.",
+    )
+    parser.add_argument(
+        "--cv-seed", type=int, default=42,
+        help="RNG seed for the k-fold split. Splits are deterministic for "
+             "a given (--folds, --cv-seed, --cv-stratify) tuple.",
+    )
+    parser.add_argument(
+        "--cv-stratify", dest="cv_stratify", action="store_true", default=True,
+        help="Stratify k-fold by minority-class image presence (default).",
+    )
+    parser.add_argument(
+        "--no-cv-stratify", dest="cv_stratify", action="store_false",
+        help="Disable stratification; use plain random k-fold.",
     )
     parser.add_argument(
         "--resume", action="store_true",
@@ -511,9 +598,21 @@ def main():
     args = parse_args()
     variant = VARIANTS[args.variant]
 
+    if args.folds > 0:
+        if args.dataset != "rob2pheno":
+            raise NotImplementedError(
+                "--folds is currently only supported for --dataset rob2pheno"
+            )
+        if not (0 <= args.fold_index < args.folds):
+            raise ValueError(
+                f"--fold-index must be in [0, {args.folds}); got {args.fold_index}"
+            )
+
     # 1. Register datasets (both registries; --dataset picks which is active)
     register_datasets()
     register_papple()
+    if args.folds > 0:
+        register_cv_fold(args.fold_index, args.folds, args.cv_seed, args.cv_stratify)
 
     # 2. Build config
     cfg = build_cfg(args)
