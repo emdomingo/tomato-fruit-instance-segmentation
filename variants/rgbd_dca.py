@@ -31,6 +31,7 @@ import types
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from variants.rgbd_early import RGBDMapper, _compute_depth_stats
 
@@ -88,12 +89,11 @@ class DCAFusion(nn.Module):
         ])
 
     def _attend(self, Q_src, K_src, V_src, Wq, Wk, Wv, residual):
-        Q = Wq(Q_src)
-        K = Wk(K_src)
-        V = Wv(V_src)
-        attn_logits = torch.bmm(Q, K.transpose(1, 2)) * self.scale
-        attn = torch.softmax(attn_logits, dim=-1)
-        return residual + torch.bmm(attn, V)
+        Q = Wq(Q_src).unsqueeze(1)   # (B, 1, N, C) -- SDPA needs a head dim
+        K = Wk(K_src).unsqueeze(1)
+        V = Wv(V_src).unsqueeze(1)
+        out = F.scaled_dot_product_attention(Q, K, V)  # (B, 1, N, C)
+        return residual + out.squeeze(1)
 
     def forward(self, rgb_tokens, depth_tokens):
         """

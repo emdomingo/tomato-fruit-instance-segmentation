@@ -27,6 +27,7 @@ import types
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from variants.rgbd_early import RGBDMapper, _compute_depth_stats
 
@@ -98,9 +99,7 @@ class DCAMultiHeadFusion(nn.Module):
         K = Wk(K_src).view(B, N, H, d).transpose(1, 2)
         V = Wv(V_src).view(B, N, H, d).transpose(1, 2)
 
-        attn_logits = torch.matmul(Q, K.transpose(-2, -1)) * self.scale  # (B, H, N, N)
-        attn = torch.softmax(attn_logits, dim=-1)
-        out = torch.matmul(attn, V)                                       # (B, H, N, d)
+        out = F.scaled_dot_product_attention(Q, K, V)   # (B, H, N, d)
 
         out = out.transpose(1, 2).contiguous().view(B, N, C)
         return residual + Wo(out)
