@@ -27,14 +27,15 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# K-fold CV: when submitted as an array job (sbatch --array=0-4 ... FOLDS=5),
+# K-fold CV: when submitted as an array job (sbatch --array=0-4%2 ... FOLDS=5),
 # use SLURM_ARRAY_TASK_ID as the fold index. Otherwise CV stays off.
+# Cap concurrency to the cluster's 2-node availability with the %2 suffix.
+# CV_SEED defaults to 42 so the same fold partition is reused across variants
+# (rgb fold 0 and rgbd_early fold 0 see the same images). Override per-experiment
+# by exporting CV_SEED before sbatch.
 FOLD_ARGS=""
 if [ -n "$FOLDS" ] && [ -n "$SLURM_ARRAY_TASK_ID" ]; then
-    FOLD_ARGS="--folds $FOLDS --fold-index $SLURM_ARRAY_TASK_ID"
-    if [ -n "$CV_SEED" ]; then
-        FOLD_ARGS="$FOLD_ARGS --cv-seed $CV_SEED"
-    fi
+    FOLD_ARGS="--folds $FOLDS --fold-index $SLURM_ARRAY_TASK_ID --cv-seed ${CV_SEED:-42}"
 fi
 
 # Train
