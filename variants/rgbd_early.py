@@ -414,19 +414,17 @@ class RGBDMapper:
         # instead of a -2σ outlier the model has to learn to ignore.
         depth = np.where(raw_depth > 0, raw_depth, self._depth_fill).astype(np.uint8)
 
-        # --- Concatenate → (H, W, 4 or 5) uint8 ----------------------
+        # --- Concatenate → (H, W, 4) uint8 ---------------------------
         # Add a channel dimension to depth (H, W) → (H, W, 1), then
         # concatenate with RGB (H, W, 3) → RGBD (H, W, 4).
         # This must happen BEFORE augmentations so geometric transforms
         # are applied identically to both modalities.
-        # If include_validity, append a 5th channel = pre-fill mask
-        # (255 valid, 0 invalid). Stored in 0/255 range so it survives
-        # the same geometric augs as the other channels.
-        channels = [rgb, depth[..., None]]
-        if self._include_validity:
-            validity = ((raw_depth > 0).astype(np.uint8) * 255)[..., None]
-            channels.append(validity)
-        image = np.concatenate(channels, axis=-1)
+        # NOTE: we keep the augmentation input at exactly 4 channels.
+        # Detectron2's resize transform routes uint8 arrays through
+        # PIL.Image.fromarray, which only accepts L/RGB/RGBA (≤4 channels).
+        # A 5-channel array would crash. The validity mask, when needed,
+        # is augmented separately below using the same transforms object.
+        image = np.concatenate([rgb, depth[..., None]], axis=-1)
 
         # --- Geometric augmentations (channel-agnostic) ---------------
         # AugInput wraps the image so Detectron2's transform pipeline can
@@ -438,6 +436,17 @@ class RGBDMapper:
             self.tfm_gens, aug_input
         )
         image = aug_input.image  # (H', W', 4) after resize/crop/flip
+
+        # --- Validity mask (optional 5th channel) --------------------
+        # Built from the *pre-fill* depth (true sensor zeros). Apply the
+        # same transforms that were applied to the 4-ch image so the
+        # mask stays spatially aligned. Stored as uint8 {0, 255}; with
+        # PIXEL_STD[4]=255.0 in the variant's update_config, this
+        # normalizes to {0.0, 1.0} at model input.
+        if self._include_validity:
+            validity = (raw_depth > 0).astype(np.uint8) * 255  # (H, W)
+            validity = transforms.apply_image(validity)        # (H', W')
+            image = np.concatenate([image, validity[..., None]], axis=-1)
 
         # --- Process annotations (masks) ------------------------------
         assert "annotations" in dataset_dict
