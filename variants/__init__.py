@@ -6,6 +6,7 @@ from variants import (
     rgbd_bicma,
     rgbd_bicma_alpha,
     rgbd_dca,
+    rgbd_dca_mask,
     rgbd_dca_multihead,
 )
 
@@ -15,5 +16,6 @@ VARIANTS = {
     "rgbd_bicma": rgbd_bicma,
     "rgbd_bicma_alpha": rgbd_bicma_alpha,
     "rgbd_dca": rgbd_dca,
+    "rgbd_dca_mask": rgbd_dca_mask,
     "rgbd_dca_multihead": rgbd_dca_multihead,
 }
