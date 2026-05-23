@@ -74,6 +74,40 @@ def _resolve_depth_dir(cfg=None):
     )
 
 
+def _resolve_training_depth_paths(cfg, depth_dir):
+    """Return depth TIFF paths restricted to the training split.
+
+    Reads the active training dataset's records (each has an RGB
+    "file_name") and maps each RGB filename to its corresponding depth
+    TIFF via `_depth_path_from_rgb`. Returns only paths that exist on
+    disk; raises if none of the training records have a matching depth
+    TIFF. If cfg is None or the dataset can't be resolved, returns None
+    so the caller can fall back to scanning the directory.
+    """
+    if cfg is None:
+        return None
+    try:
+        from detectron2.data import DatasetCatalog
+        ds_name = cfg.DATASETS.TRAIN[0]
+        records = DatasetCatalog.get(ds_name)
+    except Exception:
+        return None
+    if not records:
+        return None
+
+    paths = []
+    for r in records:
+        depth_path = Path(_depth_path_from_rgb(r["file_name"]))
+        if depth_path.exists():
+            paths.append(depth_path)
+    if not paths:
+        raise FileNotFoundError(
+            f"No depth TIFFs found for training records of '{ds_name}' "
+            f"(looked under {depth_dir})"
+        )
+    return sorted(paths)
+
+
 def _compute_depth_stats(cfg=None):
     """Compute mean/std of grayscale depth across the training depth TIFFs.
 
@@ -85,10 +119,10 @@ def _compute_depth_stats(cfg=None):
     So we need to provide the depth channel's mean and std in the same
     [0, 255] pixel-value scale that the RGB stats use.
 
-    NOTE (known issue): currently scans every TIFF in the Depth/ dir of the
-    active dataset, which on Rob2Pheno means train+val rather than train
-    only — see CLAUDE.md "Known Issues". On PApple, the Depth/ dir holds
-    all splits combined; restrict to training stems if/when this matters.
+    Restricts the scan to depth TIFFs corresponding to the training
+    split (`cfg.DATASETS.TRAIN[0]`'s records). Falls back to globbing
+    the whole Depth/ directory only when no cfg is supplied (e.g.
+    notebook / ad-hoc use).
 
     Returns:
         (mean, std) tuple of floats in [0, 255] range.
@@ -96,21 +130,31 @@ def _compute_depth_stats(cfg=None):
     from PIL import Image
 
     depth_dir = _resolve_depth_dir(cfg)
-    cached = _depth_stats_cache.get(str(depth_dir))
+    # Cache key includes whether we're scoped to a training split so that
+    # an ad-hoc no-cfg call doesn't poison the cache for a later training run.
+    cache_key = (str(depth_dir), cfg.DATASETS.TRAIN[0] if cfg is not None else None)
+    cached = _depth_stats_cache.get(cache_key)
     if cached is not None:
         return cached
 
-    paths = sorted(depth_dir.glob("*_DEPTH.tiff"))
-    if not paths:
-        raise FileNotFoundError(
-            f"No *_DEPTH.tiff files in {depth_dir}"
-        )
+    paths = _resolve_training_depth_paths(cfg, depth_dir)
+    if paths is None:
+        paths = sorted(depth_dir.glob("*_DEPTH.tiff"))
+        if not paths:
+            raise FileNotFoundError(
+                f"No *_DEPTH.tiff files in {depth_dir}"
+            )
 
     # Use running sums (Welford-like, without the online variance part)
     # to avoid loading all images into memory at once.
+    # Zero pixels are the dataset's invalid-sensor sentinel (~27% of pixels
+    # in Rob2Pheno), so exclude them from the statistics — otherwise mean
+    # is biased low and std inflated by a value that doesn't represent a
+    # real measurement.
     running_sum = 0.0
     running_sq_sum = 0.0
-    pixel_count = 0
+    valid_count = 0
+    total_count = 0
 
     for p in paths:
         # Convert to "L" (luminance) = 8-bit single-channel grayscale.
@@ -118,20 +162,24 @@ def _compute_depth_stats(cfg=None):
         # all channels have the same value, so .convert("L") collapses them.
         img = Image.open(p).convert("L")
         depth = np.asarray(img, dtype=np.float64)
-        running_sum += depth.sum()
-        running_sq_sum += (depth ** 2).sum()
-        pixel_count += depth.size
+        valid = depth > 0
+        valid_depth = depth[valid]
+        running_sum += valid_depth.sum()
+        running_sq_sum += (valid_depth ** 2).sum()
+        valid_count += int(valid.sum())
+        total_count += depth.size
 
-    # Population mean and std (not sample std — we use every pixel).
+    # Population mean and std over valid pixels only.
     # std = sqrt(E[X^2] - (E[X])^2)
-    mean = running_sum / pixel_count
-    std = np.sqrt(running_sq_sum / pixel_count - mean ** 2)
+    mean = running_sum / valid_count
+    std = np.sqrt(running_sq_sum / valid_count - mean ** 2)
 
     result = (float(mean), float(std))
-    _depth_stats_cache[str(depth_dir)] = result
+    _depth_stats_cache[cache_key] = result
     logger.info(
-        "Depth stats (grayscale): mean=%.3f, std=%.3f (%d files in %s)",
-        mean, std, len(paths), depth_dir,
+        "Depth stats (valid pixels only): mean=%.3f, std=%.3f "
+        "(%d files in %s; valid fraction=%.3f)",
+        mean, std, len(paths), depth_dir, valid_count / total_count,
     )
     return result
 
@@ -262,10 +310,24 @@ class RGBDMapper:
         → return dict with "image" and "instances"
     """
 
-    def __init__(self, cfg, is_train=True):
+    def __init__(self, cfg, is_train=True, include_validity=False):
         self.is_train = is_train
         self.img_format = cfg.INPUT.FORMAT      # Usually "BGR" for Detectron2
         self.size_divisibility = cfg.INPUT.SIZE_DIVISIBILITY  # Usually 0 or 32
+
+        # Invalid-depth fill value: replace sensor-zero pixels with the
+        # training-set mean so that after Detectron2's per-channel
+        # normalization (subtract mean, divide by std) they become ~0 —
+        # a neutral, no-signal value rather than a -2σ outlier.
+        depth_mean, _ = _compute_depth_stats(cfg)
+        self._depth_fill = np.uint8(np.clip(round(depth_mean), 0, 255))
+
+        # When True, append a 5th uint8 channel encoding the pre-fill
+        # depth validity (255 where original depth > 0, else 0). Variants
+        # like rgbd_dca_mask consume this to mask invalid tokens in
+        # cross-attention. Padded regions of the validity channel are
+        # filled with 0 (invalid).
+        self._include_validity = include_validity
 
         # Build augmentation list.
         # We use the same geometric augmentations as MaskFormerInstanceDatasetMapper,
@@ -344,18 +406,27 @@ class RGBDMapper:
         # Convert to single-channel grayscale ("L" mode = luminance).
         # Rob2Pheno depth TIFFs are stored as 3-channel images where R=G=B,
         # so .convert("L") collapses them to a single channel.
-        depth = np.asarray(
+        raw_depth = np.asarray(
             Image.open(depth_path).convert("L"), dtype=np.uint8
         )
+        # 0 is the dataset's invalid-pixel sentinel. Replace with the
+        # training mean so post-normalization these pixels are ~0 (neutral)
+        # instead of a -2σ outlier the model has to learn to ignore.
+        depth = np.where(raw_depth > 0, raw_depth, self._depth_fill).astype(np.uint8)
 
-        # --- Concatenate → (H, W, 4) uint8 ---------------------------
+        # --- Concatenate → (H, W, 4 or 5) uint8 ----------------------
         # Add a channel dimension to depth (H, W) → (H, W, 1), then
         # concatenate with RGB (H, W, 3) → RGBD (H, W, 4).
         # This must happen BEFORE augmentations so geometric transforms
         # are applied identically to both modalities.
-        image = np.concatenate(
-            [rgb, depth[..., None]], axis=-1
-        )
+        # If include_validity, append a 5th channel = pre-fill mask
+        # (255 valid, 0 invalid). Stored in 0/255 range so it survives
+        # the same geometric augs as the other channels.
+        channels = [rgb, depth[..., None]]
+        if self._include_validity:
+            validity = ((raw_depth > 0).astype(np.uint8) * 255)[..., None]
+            channels.append(validity)
+        image = np.concatenate(channels, axis=-1)
 
         # --- Geometric augmentations (channel-agnostic) ---------------
         # AugInput wraps the image so Detectron2's transform pipeline can
@@ -445,8 +516,15 @@ class RGBDMapper:
                 0, self.size_divisibility - w,    # left=0, right padding
                 0, self.size_divisibility - h,    # top=0, bottom padding
             ]
-            # Pad image with 128 (mid-gray), masks with 0 (background)
-            image = F.pad(image, padding_size, value=128).contiguous()
+            # Pad image with 128 (mid-gray), masks with 0 (background).
+            # If validity channel is present, pad it with 0 (invalid)
+            # instead of 128 — padded regions have no real measurement.
+            if self._include_validity:
+                img_pad = F.pad(image[:4], padding_size, value=128)
+                mask_pad = F.pad(image[4:5], padding_size, value=0)
+                image = torch.cat([img_pad, mask_pad], dim=0).contiguous()
+            else:
+                image = F.pad(image, padding_size, value=128).contiguous()
             masks = [
                 F.pad(x, padding_size, value=0).contiguous()
                 for x in masks
