@@ -3,7 +3,6 @@
 from variants import (
     rgb,
     rgbd_early,
-    rgbd_bicma,
     rgbd_bicma_alpha,
     rgbd_dca,
     rgbd_dca_mask,
@@ -13,7 +12,6 @@ from variants import (
 VARIANTS = {
     "rgb": rgb,
     "rgbd_early": rgbd_early,
-    "rgbd_bicma": rgbd_bicma,
     "rgbd_bicma_alpha": rgbd_bicma_alpha,
     "rgbd_dca": rgbd_dca,
     "rgbd_dca_mask": rgbd_dca_mask,
