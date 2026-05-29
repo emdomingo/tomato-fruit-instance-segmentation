@@ -46,3 +46,7 @@ visualizations/
 # Archived training runs and generated figures (large binaries)
 output_archive/
 figures/
+
+# Local dependencies / test scripts
+src/detectron2/
+test_deps.sh
