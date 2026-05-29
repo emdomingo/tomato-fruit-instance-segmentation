@@ -1,0 +1,6 @@
+output/rgb_mi8000_sz1280_sz1280_swin_tiny/model_final.pth
+output/rgbd_early_mi8000_sz1280_fixed_depth_swin_tiny/model_final.pth
+output/rgbd_dca_iter0_mi8000_sz1280_sz1280_swin_tiny/model_final.pth
+output/rgbd_dca_iter1_mi8000_sz1280_sz1280_swin_tiny/model_final.pth
+output/rgbd_dca_iter2_mi8000_sz1280_sz1280_swin_tiny/model_final.pth
+data/Rob2Pheno
