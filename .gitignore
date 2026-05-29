@@ -43,4 +43,6 @@ tomato_mask2former_swin.ipynb
 
 visualizations/
 
-.gitignorefigures/
+# Archived training runs and generated figures (large binaries)
+output_archive/
+figures/
