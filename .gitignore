@@ -1,0 +1,46 @@
+# Data and large files
+data/
+pretrained/
+
+# Training outputs: ignore checkpoints/visualisations, keep metrics+predictions
+output/*
+!output/*/
+!output/*/metrics.json
+!output/*/log.txt
+!output/*/config.yaml
+!output/*/last_checkpoint
+!output/*/events.out.tfevents.*
+!output/*/inference/
+output/*/inference/*
+!output/*/inference/coco_instances_results.json
+!output/*/inference/rob2pheno_val_coco_format.json
+output/**/*.pth
+output/**/vis/
+
+# Mask2Former (upstream submodule / vendored)
+Mask2Former/
+
+# Claude related files
+.claude/
+
+# Markdown docs
+*.md
+
+# Slurm output
+slurm-*.out
+logs/
+
+# Lock files and inference binaries
+*.lock
+/inference/*.pth
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+
+tomato_mask2former_swin.ipynb
+
+visualizations/
+
+.gitignorefigures/
