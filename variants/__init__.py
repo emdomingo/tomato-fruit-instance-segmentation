@@ -7,6 +7,7 @@ from variants import (
     rgbd_dca,
     rgbd_dca_mask,
     rgbd_dca_multihead,
+    rgbd_dca_rgbinit,
 )
 
 VARIANTS = {
@@ -16,4 +17,5 @@ VARIANTS = {
     "rgbd_dca": rgbd_dca,
     "rgbd_dca_mask": rgbd_dca_mask,
     "rgbd_dca_multihead": rgbd_dca_multihead,
+    "rgbd_dca_rgbinit": rgbd_dca_rgbinit,
 }

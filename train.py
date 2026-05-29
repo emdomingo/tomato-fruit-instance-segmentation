@@ -305,6 +305,8 @@ def build_cfg(args):
     # -- Variant-specific config --
     cfg.MODEL.DCA_ITERS = args.dca_iters
     cfg.MODEL.DCA_HEADS = args.dca_heads
+    cfg.MODEL.DCA_RGB_INIT_WEIGHTS = args.dca_rgb_init_weights
+    cfg.MODEL.DCA_RGB_INIT_LR_MULT = args.dca_rgb_init_lr_mult
 
     # -- Output --
     if args.variant == "rgbd_dca_multihead":
@@ -407,6 +409,12 @@ class Rob2PhenoTrainer(DefaultTrainer):
             torch.nn.LocalResponseNorm,
         )
 
+        # rgbd_dca_rgbinit warm-starts patch_embed_rgb from a fine-tuned RGB
+        # checkpoint; keep it near-frozen with a tiny LR rather than the full
+        # base LR new variant modules otherwise get.
+        rgb_init_active = bool(getattr(cfg.MODEL, "DCA_RGB_INIT_WEIGHTS", ""))
+        rgb_init_lr = cfg.SOLVER.BASE_LR * getattr(cfg.MODEL, "DCA_RGB_INIT_LR_MULT", 1.0)
+
         params: List[Dict[str, Any]] = []
         memo: Set[torch.nn.parameter.Parameter] = set()
         for module_name, module in model.named_modules():
@@ -429,6 +437,8 @@ class Rob2PhenoTrainer(DefaultTrainer):
                     hyperparams["lr"] = (
                         hyperparams["lr"] * cfg.SOLVER.BACKBONE_MULTIPLIER
                     )
+                if rgb_init_active and "patch_embed_rgb" in module_name:
+                    hyperparams["lr"] = rgb_init_lr
                 if (
                     "relative_position_bias_table" in module_param_name
                     or "absolute_pos_embed" in module_param_name
@@ -512,6 +522,18 @@ def parse_args():
         "--dca-heads", type=int, default=4,
         help="Number of attention heads for rgbd_dca_multihead "
              "(must divide embed_dim; ignored otherwise).",
+    )
+    parser.add_argument(
+        "--dca-rgb-init-weights", type=str, default="",
+        help="Path to a fine-tuned RGB checkpoint (.pth). rgbd_dca_rgbinit "
+             "warm-starts patch_embed_rgb from this file's backbone.patch_embed.* "
+             "tensors (ignored by other variants).",
+    )
+    parser.add_argument(
+        "--dca-rgb-init-lr-mult", type=float, default=0.01,
+        help="LR multiplier (x BASE_LR) for the warm-started patch_embed_rgb in "
+             "rgbd_dca_rgbinit. Small value keeps the fine-tuned patch embed "
+             "nearly frozen (ignored unless --dca-rgb-init-weights is set).",
     )
     parser.add_argument(
         "--run-tag", type=str, default="",
