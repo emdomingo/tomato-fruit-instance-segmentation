@@ -1,0 +1,4 @@
+[05/30 13:16:08] mask2former INFO: Variant: rgb
+[05/30 13:16:08] mask2former INFO: Output:  /bigdata/users/22164775/tomato-seg/output/rgb_mi5000_swin_tiny
+[05/30 13:16:09] mask2former.data.dataset_mappers.mask_former_instance_dataset_mapper INFO: [MaskFormerInstanceDatasetMapper] Augmentations used in training: [ResizeShortestEdge(short_edge_length=(480, 512, 544, 576, 608, 640), max_size=640, sample_style='choice'), RandomFlip()]
+[05/30 13:16:11] mask2former.modeling.transformer_decoder.mask2former_transformer_decoder WARNING: Weight format of MultiScaleMaskedTransformerDecoder have changed! Please upgrade your models. Applying automatic conversion now ...
