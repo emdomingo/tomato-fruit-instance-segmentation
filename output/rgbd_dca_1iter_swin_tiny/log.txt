@@ -1,3 +1,0 @@
-[05/06 21:44:06] mask2former INFO: Variant: rgbd_dca_1iter
-[05/06 21:44:06] mask2former INFO: Output:  /bigdata/users/22164775/tomato-seg/output/rgbd_dca_1iter_swin_tiny
-[05/06 21:44:11] mask2former.modeling.transformer_decoder.mask2former_transformer_decoder WARNING: Weight format of MultiScaleMaskedTransformerDecoder have changed! Please upgrade your models. Applying automatic conversion now ...
