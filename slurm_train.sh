@@ -46,6 +46,10 @@ python -W ignore::FutureWarning train.py \
     --max-iter ${MAX_ITER:-5000} \
     --num-workers 8 \
     ${DATASET:+--dataset $DATASET} \
+    ${LR_SCHEDULER:+--lr-scheduler $LR_SCHEDULER} \
+    ${WARMUP_ITERS:+--warmup-iters $WARMUP_ITERS} \
+    ${WARMUP_FACTOR:+--warmup-factor $WARMUP_FACTOR} \
+    ${DCA_LR_MULT:+--dca-lr-mult $DCA_LR_MULT} \
     ${DCA_ITERS:+--dca-iters $DCA_ITERS} \
     ${DCA_HEADS:+--dca-heads $DCA_HEADS} \
     ${DCA_RGB_INIT_WEIGHTS:+--dca-rgb-init-weights $DCA_RGB_INIT_WEIGHTS} \

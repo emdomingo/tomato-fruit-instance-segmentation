@@ -279,9 +279,13 @@ def build_cfg(args):
     cfg.SOLVER.IMS_PER_BATCH = args.batch_size
     cfg.SOLVER.BASE_LR = args.lr
     cfg.SOLVER.MAX_ITER = args.max_iter
+    cfg.SOLVER.LR_SCHEDULER_NAME = args.lr_scheduler
     cfg.SOLVER.STEPS = (int(0.7 * args.max_iter), int(0.9 * args.max_iter))
     cfg.SOLVER.GAMMA = 0.1
-    cfg.SOLVER.WARMUP_ITERS = 200
+    # STEPS/GAMMA are only consumed by WarmupMultiStepLR; WarmupCosineLR and
+    # WarmupPolyLR anneal smoothly to ~0 by MAX_ITER and ignore them.
+    cfg.SOLVER.WARMUP_ITERS = args.warmup_iters
+    cfg.SOLVER.WARMUP_FACTOR = args.warmup_factor
     cfg.SOLVER.CHECKPOINT_PERIOD = 1000
     cfg.SOLVER.CLIP_GRADIENTS.CLIP_TYPE = "norm"
     cfg.TEST.EVAL_PERIOD = 1000
@@ -307,6 +311,7 @@ def build_cfg(args):
     cfg.MODEL.DCA_HEADS = args.dca_heads
     cfg.MODEL.DCA_RGB_INIT_WEIGHTS = args.dca_rgb_init_weights
     cfg.MODEL.DCA_RGB_INIT_LR_MULT = args.dca_rgb_init_lr_mult
+    cfg.MODEL.DCA_LR_MULT = args.dca_lr_mult
 
     # -- Output --
     if args.variant == "rgbd_dca_multihead":
@@ -318,6 +323,13 @@ def build_cfg(args):
     if args.green_weight != 1.0:
         suffix += f"_gw{str(args.green_weight).replace('.', '_')}"
     suffix += f"_mi{args.max_iter}"
+    _sched_tag = {"WarmupCosineLR": "cos", "WarmupPolyLR": "poly"}.get(
+        args.lr_scheduler, ""
+    )
+    if _sched_tag:
+        suffix += f"_{_sched_tag}"
+    if args.dca_lr_mult != 1.0:
+        suffix += f"_dlr{str(args.dca_lr_mult).replace('.', '_')}"
     if args.input_max_size != 640:
         suffix += f"_sz{args.input_max_size}"
     if args.folds > 0:
@@ -415,6 +427,12 @@ class Rob2PhenoTrainer(DefaultTrainer):
         rgb_init_active = bool(getattr(cfg.MODEL, "DCA_RGB_INIT_WEIGHTS", ""))
         rgb_init_lr = cfg.SOLVER.BASE_LR * getattr(cfg.MODEL, "DCA_RGB_INIT_LR_MULT", 1.0)
 
+        # The DCA fusion + depth patch embed start from zero/mean-init and must
+        # grow before the model overfits (~iter 2000), while the RGB tower is
+        # already near-optimal. DCA_LR_MULT gives just those groups a faster LR
+        # so depth can contribute inside that window. 1.0 = unchanged.
+        dca_lr_mult = getattr(cfg.MODEL, "DCA_LR_MULT", 1.0)
+
         params: List[Dict[str, Any]] = []
         memo: Set[torch.nn.parameter.Parameter] = set()
         for module_name, module in model.named_modules():
@@ -437,6 +455,10 @@ class Rob2PhenoTrainer(DefaultTrainer):
                     hyperparams["lr"] = (
                         hyperparams["lr"] * cfg.SOLVER.BACKBONE_MULTIPLIER
                     )
+                if dca_lr_mult != 1.0 and any(
+                    s in module_name for s in ("fusion", "patch_embed_depth")
+                ):
+                    hyperparams["lr"] = hyperparams["lr"] * dca_lr_mult
                 if rgb_init_active and "patch_embed_rgb" in module_name:
                     hyperparams["lr"] = rgb_init_lr
                 if (
@@ -507,6 +529,31 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--max-iter", type=int, default=5000)
     parser.add_argument("--num-workers", type=int, default=4)
+    parser.add_argument(
+        "--lr-scheduler", type=str, default="WarmupMultiStepLR",
+        choices=["WarmupMultiStepLR", "WarmupCosineLR", "WarmupPolyLR"],
+        help="LR schedule. Default WarmupMultiStepLR: 10x step decay at "
+             "0.7/0.9*max_iter. WarmupCosineLR/WarmupPolyLR anneal smoothly to "
+             "~0 by max_iter (no cliff; STEPS/GAMMA ignored). Appends a short "
+             "tag (e.g. '_cos') to OUTPUT_DIR when not the default.",
+    )
+    parser.add_argument(
+        "--warmup-iters", type=int, default=200,
+        help="Linear LR warmup length. Pair with --warmup-factor < 1 to "
+             "actually ramp (the base config's WARMUP_FACTOR=1.0 = no ramp).",
+    )
+    parser.add_argument(
+        "--warmup-factor", type=float, default=1.0,
+        help="Starting LR as a fraction of BASE_LR (e.g. 0.01). Default 1.0 "
+             "preserves the prior no-warmup behavior.",
+    )
+    parser.add_argument(
+        "--dca-lr-mult", type=float, default=1.0,
+        help="LR multiplier (x BASE_LR) applied ONLY to the DCA fusion and "
+             "patch_embed_depth groups, so the zero/mean-init depth path can "
+             "grow before the model overfits. 1.0 = unchanged. Auto-appends "
+             "'_dlr{val}' to OUTPUT_DIR (rgbd_dca* variants only).",
+    )
     parser.add_argument(
         "--input-max-size", type=int, default=640,
         help="Max image size for train+test. MIN_SIZE_TRAIN sweeps from "
