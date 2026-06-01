@@ -52,6 +52,7 @@ python -W ignore::FutureWarning train.py \
     ${DCA_LR_MULT:+--dca-lr-mult $DCA_LR_MULT} \
     ${DCA_ITERS:+--dca-iters $DCA_ITERS} \
     ${DCA_HEADS:+--dca-heads $DCA_HEADS} \
+    ${DCA_WINDOW:+--dca-window $DCA_WINDOW} \
     ${DCA_RGB_INIT_WEIGHTS:+--dca-rgb-init-weights $DCA_RGB_INIT_WEIGHTS} \
     ${DCA_RGB_INIT_LR_MULT:+--dca-rgb-init-lr-mult $DCA_RGB_INIT_LR_MULT} \
     ${GREEN_WEIGHT:+--green-weight $GREEN_WEIGHT} \

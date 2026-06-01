@@ -309,6 +309,7 @@ def build_cfg(args):
     # -- Variant-specific config --
     cfg.MODEL.DCA_ITERS = args.dca_iters
     cfg.MODEL.DCA_HEADS = args.dca_heads
+    cfg.MODEL.DCA_WINDOW = args.dca_window
     cfg.MODEL.DCA_RGB_INIT_WEIGHTS = args.dca_rgb_init_weights
     cfg.MODEL.DCA_RGB_INIT_LR_MULT = args.dca_rgb_init_lr_mult
     cfg.MODEL.DCA_LR_MULT = args.dca_lr_mult
@@ -316,6 +317,8 @@ def build_cfg(args):
     # -- Output --
     if args.variant == "rgbd_dca_multihead":
         suffix = f"_h{args.dca_heads}_iter{args.dca_iters}"
+    elif args.variant == "rgbd_dca_local":
+        suffix = f"_w{args.dca_window}_iter{args.dca_iters}"
     elif args.variant.startswith("rgbd_dca"):
         suffix = f"_iter{args.dca_iters}"
     else:
@@ -569,6 +572,12 @@ def parse_args():
         "--dca-heads", type=int, default=4,
         help="Number of attention heads for rgbd_dca_multihead "
              "(must divide embed_dim; ignored otherwise).",
+    )
+    parser.add_argument(
+        "--dca-window", type=int, default=7,
+        help="Window size for rgbd_dca_local: cross-attention is restricted "
+             "to non-overlapping w×w token windows (w=1 -> pointwise fusion; "
+             "ignored by other variants). Appends '_w{val}' to OUTPUT_DIR.",
     )
     parser.add_argument(
         "--dca-rgb-init-weights", type=str, default="",
