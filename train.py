@@ -194,6 +194,79 @@ def register_papple():
         )
 
 
+def _best_checkpoint_in_dir(run_dir, metric=None):
+    """Return the checkpoint in run_dir with the highest <metric> in metrics.json.
+
+    Used to warm-start each rgbd_dca_rgbinit run from the *best* RGB epoch rather
+    than the final iteration, which tends to overfit (runs often peak well before
+    MAX_ITER). Detectron2 names periodic checkpoints model_{iter:07d}.pth; the
+    end-of-training state is saved as model_final.pth and logged at iteration ==
+    max_iter, so the best-iter == final case maps to model_final.pth.
+
+    metric: the metrics.json key to maximize. When None, prefer the in-fold
+    validation set (rob2pheno_fold_val/segm/AP, the right model-selection signal
+    for CV runs) and otherwise fall back to whatever single */segm/AP eval the run
+    logged (e.g. rob2pheno_val for a non-CV run).
+    """
+    metrics_path = os.path.join(run_dir, "metrics.json")
+    if not os.path.isfile(metrics_path):
+        raise FileNotFoundError(
+            f"Cannot auto-select best RGB checkpoint: {metrics_path} not found."
+        )
+    # best[key] = (iter, val); track the global max iteration for the final-eval case.
+    best = {}
+    max_iter_seen = -1
+    with open(metrics_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if row.get("iteration") is None:
+                continue
+            max_iter_seen = max(max_iter_seen, row["iteration"])
+            for key, val in row.items():
+                # Detectron2 logs the primary mask AP as "<dataset>/segm/AP" when
+                # multiple TEST sets exist (CV runs), or bare "segm/AP" for a single
+                # TEST set (non-CV runs). Match both, but not AP50/AP75/AP-<class>.
+                if key != "segm/AP" and not key.endswith("/segm/AP"):
+                    continue
+                if key not in best or val > best[key][1]:
+                    best[key] = (row["iteration"], val)
+    if metric is None:
+        if "rob2pheno_fold_val/segm/AP" in best:
+            metric = "rob2pheno_fold_val/segm/AP"
+        elif len(best) == 1:
+            metric = next(iter(best))
+        elif not best:
+            raise ValueError(
+                f"No '*/segm/AP' eval rows in {metrics_path}; cannot pick a checkpoint."
+            )
+        else:
+            raise ValueError(
+                f"Multiple eval datasets in {metrics_path} ({sorted(best)}); "
+                f"pass an explicit metric to _best_checkpoint_in_dir."
+            )
+    if metric not in best:
+        raise ValueError(
+            f"No '{metric}' eval rows in {metrics_path}; cannot pick a checkpoint."
+        )
+    best_iter, best_val = best[metric]
+    # The final eval is logged at max_iter but the file is model_final.pth.
+    if best_iter == max_iter_seen:
+        ckpt = os.path.join(run_dir, "model_final.pth")
+    else:
+        ckpt = os.path.join(run_dir, f"model_{best_iter:07d}.pth")
+    logging.getLogger("mask2former").info(
+        "[rgb-init] best checkpoint in %s: iter %d (%s=%.3f) -> %s",
+        run_dir, best_iter, metric, best_val, os.path.basename(ckpt),
+    )
+    return ckpt
+
+
 def register_cv_fold(fold_idx: int, k: int, seed: int, stratify: bool):
     """Register rob2pheno_fold_train / rob2pheno_fold_val by splitting train_2class.JSON.
 
@@ -310,7 +383,27 @@ def build_cfg(args):
     cfg.MODEL.DCA_ITERS = args.dca_iters
     cfg.MODEL.DCA_HEADS = args.dca_heads
     cfg.MODEL.DCA_WINDOW = args.dca_window
-    cfg.MODEL.DCA_RGB_INIT_WEIGHTS = args.dca_rgb_init_weights
+    # Allow a "{fold}" placeholder in the RGB-init path so an array job can point
+    # each fold at the matching RGB fold run (e.g.
+    # output/rgb_..._fold{fold}of5_..._swin_tiny). The shell can't do this
+    # substitution itself, so resolve it here against the active fold index. When
+    # the resolved path is a directory we auto-select the best RGB checkpoint by
+    # fold-val AP rather than warm-starting from the (often overfit) final iter.
+    dca_rgb_init_weights = args.dca_rgb_init_weights
+    if "{fold}" in dca_rgb_init_weights:
+        if args.folds <= 0:
+            raise ValueError(
+                "--dca-rgb-init-weights contains '{fold}' but --folds is not set; "
+                "the placeholder can only be resolved during k-fold CV."
+            )
+        dca_rgb_init_weights = dca_rgb_init_weights.format(fold=args.fold_index)
+    if dca_rgb_init_weights and os.path.isdir(dca_rgb_init_weights):
+        dca_rgb_init_weights = _best_checkpoint_in_dir(dca_rgb_init_weights)
+    if dca_rgb_init_weights and not os.path.isfile(dca_rgb_init_weights):
+        raise FileNotFoundError(
+            f"--dca-rgb-init-weights points at a missing file: {dca_rgb_init_weights}"
+        )
+    cfg.MODEL.DCA_RGB_INIT_WEIGHTS = dca_rgb_init_weights
     cfg.MODEL.DCA_RGB_INIT_LR_MULT = args.dca_rgb_init_lr_mult
     cfg.MODEL.DCA_LR_MULT = args.dca_lr_mult
 
