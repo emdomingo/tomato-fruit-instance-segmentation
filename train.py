@@ -66,6 +66,14 @@ from mask2former import (
 from variants import VARIANTS
 from cv_splits import make_kfold_splits
 
+# Modules that stay trainable under --freeze-non-variant. Substring-matched
+# against parameter names: "patch_embed" covers backbone.patch_embed (rgb,
+# rgbd_early) as well as patch_embed_rgb/patch_embed_depth (rgbd_dca*);
+# "fusion" covers the DCA fusion blocks; "class_embed" keeps the randomly
+# initialized 2-class head trainable (the COCO 80-class head cannot load
+# into it, so freezing it would leave a random classifier).
+FREEZE_TRAINABLE_KEYWORDS = ("patch_embed", "fusion", "class_embed")
+
 
 # ===========================================================================
 # Dataset loading & registration
@@ -406,6 +414,7 @@ def build_cfg(args):
     cfg.MODEL.DCA_RGB_INIT_WEIGHTS = dca_rgb_init_weights
     cfg.MODEL.DCA_RGB_INIT_LR_MULT = args.dca_rgb_init_lr_mult
     cfg.MODEL.DCA_LR_MULT = args.dca_lr_mult
+    cfg.MODEL.FREEZE_NON_VARIANT = args.freeze_non_variant
 
     # -- Output --
     if args.variant == "rgbd_dca_multihead":
@@ -426,6 +435,8 @@ def build_cfg(args):
         suffix += f"_{_sched_tag}"
     if args.dca_lr_mult != 1.0:
         suffix += f"_dlr{str(args.dca_lr_mult).replace('.', '_')}"
+    if args.freeze_non_variant:
+        suffix += "_frz"
     if args.input_max_size != 640:
         suffix += f"_sz{args.input_max_size}"
     if args.folds > 0:
@@ -467,6 +478,23 @@ class Rob2PhenoTrainer(DefaultTrainer):
         model = super().build_model(cfg)
         if cls._variant is not None:
             model = cls._variant.update_model(model, cfg)
+        if cfg.MODEL.FREEZE_NON_VARIANT:
+            # Freeze everything except the variant input modules and the
+            # 2-class head. build_optimizer skips params with
+            # requires_grad=False, so this is the whole mechanism.
+            logger = logging.getLogger("mask2former")
+            trainable, total = 0, 0
+            for name, p in model.named_parameters():
+                keep = any(k in name for k in FREEZE_TRAINABLE_KEYWORDS)
+                p.requires_grad_(keep)
+                total += p.numel()
+                if keep:
+                    trainable += p.numel()
+                    logger.info("[freeze] trainable: %s (%d)", name, p.numel())
+            logger.info(
+                "[freeze] %d / %d params trainable (%.3f%%)",
+                trainable, total, 100.0 * trainable / total,
+            )
         return model
 
     @classmethod
@@ -547,7 +575,15 @@ class Rob2PhenoTrainer(DefaultTrainer):
                     s in module_name
                     for s in ("fusion", "patch_embed_depth", "patch_embed_rgb")
                 )
-                if "backbone" in module_name and not is_new_variant_module:
+                # Under --freeze-non-variant, everything still trainable is a
+                # variant module or the class head, so skip the 0.1x backbone
+                # multiplier (otherwise rgb/rgbd_early's backbone.patch_embed
+                # would train 10x slower than the DCA variants' modules).
+                if (
+                    "backbone" in module_name
+                    and not is_new_variant_module
+                    and not cfg.MODEL.FREEZE_NON_VARIANT
+                ):
                     hyperparams["lr"] = (
                         hyperparams["lr"] * cfg.SOLVER.BACKBONE_MULTIPLIER
                     )
@@ -683,6 +719,12 @@ def parse_args():
         help="LR multiplier (x BASE_LR) for the warm-started patch_embed_rgb in "
              "rgbd_dca_rgbinit. Small value keeps the fine-tuned patch embed "
              "nearly frozen (ignored unless --dca-rgb-init-weights is set).",
+    )
+    parser.add_argument(
+        "--freeze-non-variant", action="store_true",
+        help="Freeze all weights except the variant input modules "
+             "(patch_embed*, fusion) and the randomly-initialized 2-class "
+             "class_embed head. Appends '_frz' to OUTPUT_DIR.",
     )
     parser.add_argument(
         "--run-tag", type=str, default="",

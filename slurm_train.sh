@@ -56,6 +56,7 @@ python -W ignore::FutureWarning train.py \
     ${DCA_RGB_INIT_WEIGHTS:+--dca-rgb-init-weights $DCA_RGB_INIT_WEIGHTS} \
     ${DCA_RGB_INIT_LR_MULT:+--dca-rgb-init-lr-mult $DCA_RGB_INIT_LR_MULT} \
     ${GREEN_WEIGHT:+--green-weight $GREEN_WEIGHT} \
+    ${FREEZE:+--freeze-non-variant} \
     ${INPUT_MAX_SIZE:+--input-max-size $INPUT_MAX_SIZE} \
     ${RUN_TAG:+--run-tag $RUN_TAG} \
     $FOLD_ARGS
