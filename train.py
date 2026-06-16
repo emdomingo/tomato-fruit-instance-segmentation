@@ -359,17 +359,48 @@ def build_cfg(args):
     # -- Solver --
     cfg.SOLVER.IMS_PER_BATCH = args.batch_size
     cfg.SOLVER.BASE_LR = args.lr
-    cfg.SOLVER.MAX_ITER = args.max_iter
+    # iters_per_epoch drives both --epochs (total length) and --eval-epochs
+    # (eval/checkpoint cadence). It's derived from the registered train set size
+    # so the same "epoch" means the same number of passes over the data
+    # regardless of fold size or batch size. The dataset is already registered
+    # (main() registers before build_cfg), so the length query is safe here.
+    # ceil division: iters_per_epoch = ceil(N / batch_size).
+    num_train = len(DatasetCatalog.get(cfg.DATASETS.TRAIN[0]))
+    iters_per_epoch = (num_train + args.batch_size - 1) // args.batch_size
+
+    # --epochs (optional) overrides --max-iter.
+    if args.epochs > 0:
+        max_iter = args.epochs * iters_per_epoch
+    else:
+        max_iter = args.max_iter
+    cfg.SOLVER.MAX_ITER = max_iter
     cfg.SOLVER.LR_SCHEDULER_NAME = args.lr_scheduler
-    cfg.SOLVER.STEPS = (int(0.7 * args.max_iter), int(0.9 * args.max_iter))
+    cfg.SOLVER.STEPS = (int(0.7 * max_iter), int(0.9 * max_iter))
     cfg.SOLVER.GAMMA = 0.1
     # STEPS/GAMMA are only consumed by WarmupMultiStepLR; WarmupCosineLR and
     # WarmupPolyLR anneal smoothly to ~0 by MAX_ITER and ignore them.
     cfg.SOLVER.WARMUP_ITERS = args.warmup_iters
     cfg.SOLVER.WARMUP_FACTOR = args.warmup_factor
-    cfg.SOLVER.CHECKPOINT_PERIOD = 1000
+
+    # Eval/checkpoint cadence. --eval-epochs (optional) expresses it in epochs so
+    # checkpoints land on epoch boundaries (best-by-AP checkpoint == an epoch);
+    # otherwise fall back to --eval-period in iterations. Checkpoint and eval are
+    # kept aligned so the best-by-AP checkpoint always exists on disk for
+    # _best_checkpoint_in_dir / warm-starting.
+    if args.eval_epochs > 0:
+        eval_period = max(1, round(args.eval_epochs * iters_per_epoch))
+    else:
+        eval_period = args.eval_period
+    cfg.SOLVER.CHECKPOINT_PERIOD = eval_period
+    cfg.TEST.EVAL_PERIOD = eval_period
     cfg.SOLVER.CLIP_GRADIENTS.CLIP_TYPE = "norm"
-    cfg.TEST.EVAL_PERIOD = 1000
+
+    logging.getLogger("mask2former").info(
+        "[epochs] %d train images / batch %d = %d iters/epoch -> MAX_ITER=%d "
+        "(%.1f epochs), eval/checkpoint every %d iters (%.2f epochs)",
+        num_train, args.batch_size, iters_per_epoch, max_iter,
+        max_iter / iters_per_epoch, eval_period, eval_period / iters_per_epoch,
+    )
 
     # -- Input --
     max_size = args.input_max_size
@@ -427,7 +458,13 @@ def build_cfg(args):
         suffix = ""
     if args.green_weight != 1.0:
         suffix += f"_gw{str(args.green_weight).replace('.', '_')}"
-    suffix += f"_mi{args.max_iter}"
+    if args.epochs > 0:
+        suffix += f"_ep{args.epochs}"
+    suffix += f"_mi{max_iter}"
+    if args.eval_epochs > 0:
+        suffix += f"_ee{str(args.eval_epochs).replace('.', '_')}"
+    elif args.eval_period != 1000:
+        suffix += f"_ev{args.eval_period}"
     _sched_tag = {"WarmupCosineLR": "cos", "WarmupPolyLR": "poly"}.get(
         args.lr_scheduler, ""
     )
@@ -660,6 +697,31 @@ def parse_args():
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--max-iter", type=int, default=5000)
+    parser.add_argument(
+        "--epochs", type=int, default=0,
+        help="If > 0, derive MAX_ITER (and the STEPS decay points) from the "
+             "registered train set size, overriding --max-iter: "
+             "iters_per_epoch = ceil(num_train_images / batch_size), "
+             "MAX_ITER = epochs * iters_per_epoch. Keeps runs comparable across "
+             "folds/batch sizes. Appends '_ep{val}' to OUTPUT_DIR. "
+             "0 (default) = use --max-iter directly.",
+    )
+    parser.add_argument(
+        "--eval-period", type=int, default=1000,
+        help="Iterations between validation evals AND periodic checkpoints "
+             "(both are set to this so the best-by-AP checkpoint always exists "
+             "on disk). Lower it (e.g. 500) to pinpoint the early overfit peak. "
+             "Appends '_ev{val}' to OUTPUT_DIR when != 1000. Ignored when "
+             "--eval-epochs > 0.",
+    )
+    parser.add_argument(
+        "--eval-epochs", type=float, default=0,
+        help="If > 0, eval+checkpoint every N epochs instead of every "
+             "--eval-period iterations, so checkpoints land on epoch boundaries "
+             "and the best-by-AP checkpoint corresponds to an epoch: "
+             "period = round(N * ceil(num_train / batch_size)). Fractional "
+             "values allowed (e.g. 0.5). Appends '_ee{val}' to OUTPUT_DIR.",
+    )
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument(
         "--lr-scheduler", type=str, default="WarmupMultiStepLR",

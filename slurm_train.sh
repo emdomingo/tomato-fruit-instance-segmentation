@@ -41,10 +41,13 @@ fi
 # Train
 python -W ignore::FutureWarning train.py \
     --variant ${VARIANT:-rgb} \
-    --batch-size ${BATCH_SIZE:-4} \
-    --lr ${LR:-2e-4} \
+    --batch-size ${BATCH_SIZE:-2} \
+    --lr ${LR:-1e-4} \
     --max-iter ${MAX_ITER:-5000} \
     --num-workers 8 \
+    ${EPOCHS:+--epochs $EPOCHS} \
+    ${EVAL_PERIOD:+--eval-period $EVAL_PERIOD} \
+    ${EVAL_EPOCHS:+--eval-epochs $EVAL_EPOCHS} \
     ${DATASET:+--dataset $DATASET} \
     ${LR_SCHEDULER:+--lr-scheduler $LR_SCHEDULER} \
     ${WARMUP_ITERS:+--warmup-iters $WARMUP_ITERS} \
@@ -57,6 +60,6 @@ python -W ignore::FutureWarning train.py \
     ${DCA_RGB_INIT_LR_MULT:+--dca-rgb-init-lr-mult $DCA_RGB_INIT_LR_MULT} \
     ${GREEN_WEIGHT:+--green-weight $GREEN_WEIGHT} \
     ${FREEZE:+--freeze-non-variant} \
-    ${INPUT_MAX_SIZE:+--input-max-size $INPUT_MAX_SIZE} \
+    --input-max-size ${INPUT_MAX_SIZE:-1280} \
     ${RUN_TAG:+--run-tag $RUN_TAG} \
     $FOLD_ARGS
