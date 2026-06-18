@@ -1,0 +1,10 @@
+[06/18 13:03:39] mask2former INFO: Variant: rgbd_early
+[06/18 13:03:39] mask2former INFO: Output:  /bigdata/users/22164775/tomato-seg/output/rgbd_early_ep200_mi6600_ee10_0_cos_frz_sz1280_fold2of5_seed42_swin_tiny
+[06/18 13:03:40] mask2former INFO: [freeze] trainable: backbone.patch_embed.proj.weight (6144)
+[06/18 13:03:40] mask2former INFO: [freeze] trainable: backbone.patch_embed.proj.bias (96)
+[06/18 13:03:40] mask2former INFO: [freeze] trainable: backbone.patch_embed.norm.weight (96)
+[06/18 13:03:40] mask2former INFO: [freeze] trainable: backbone.patch_embed.norm.bias (96)
+[06/18 13:03:40] mask2former INFO: [freeze] trainable: sem_seg_head.predictor.class_embed.weight (768)
+[06/18 13:03:40] mask2former INFO: [freeze] trainable: sem_seg_head.predictor.class_embed.bias (3)
+[06/18 13:03:40] mask2former INFO: [freeze] 7203 / 47403133 params trainable (0.015%)
+[06/18 13:03:40] mask2former.modeling.transformer_decoder.mask2former_transformer_decoder WARNING: Weight format of MultiScaleMaskedTransformerDecoder have changed! Please upgrade your models. Applying automatic conversion now ...
