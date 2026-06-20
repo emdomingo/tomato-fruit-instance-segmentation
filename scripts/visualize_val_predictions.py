@@ -35,11 +35,11 @@ from detectron2.utils.visualizer import Visualizer, ColorMode  # noqa: E402
 
 # (column label, variant name, dca_iters, run directory) -- the median-fold
 MODELS = [
-    ("rgb",        "rgb",         0, "output/rgb_ep200_mi6600_ee10_0_cos_sz1280_fold2of5_seed42_swin_tiny"),
-    ("rgbd_early", "rgbd_early",  0, "output/rgbd_early_ep200_mi6600_ee10_0_cos_sz1280_fold1of5_seed42_swin_tiny"),
-    ("dca K=0",    "rgbd_dca",    0, "output/rgbd_dca_iter0_ep200_mi6600_ee10_0_cos_dlr5_0_sz1280_fold3of5_seed42_swin_tiny"),
-    ("dca K=1",    "rgbd_dca",    1, "output/rgbd_dca_iter1_ep200_mi6600_ee10_0_cos_dlr5_0_sz1280_fold0of5_seed42_swin_tiny"),
-    ("dca K=2",    "rgbd_dca",    2, "output/rgbd_dca_iter2_ep200_mi6600_ee10_0_cos_dlr5_0_sz1280_fold1of5_seed42_swin_tiny"),
+    ("RGB",          "rgb",         0, "output/rgb_ep200_mi6600_ee10_0_cos_sz1280_fold2of5_seed42_swin_tiny"),
+    ("RGBD Early",   "rgbd_early",  0, "output/rgbd_early_ep200_mi6600_ee10_0_cos_sz1280_fold1of5_seed42_swin_tiny"),
+    ("RGBD DCA K=0", "rgbd_dca",    0, "output/rgbd_dca_iter0_ep200_mi6600_ee10_0_cos_dlr5_0_sz1280_fold3of5_seed42_swin_tiny"),
+    ("RGBD DCA K=1", "rgbd_dca",    1, "output/rgbd_dca_iter1_ep200_mi6600_ee10_0_cos_dlr5_0_sz1280_fold0of5_seed42_swin_tiny"),
+    ("RGBD DCA K=2", "rgbd_dca",    2, "output/rgbd_dca_iter2_ep200_mi6600_ee10_0_cos_dlr5_0_sz1280_fold1of5_seed42_swin_tiny"),
 ]
 
 DATASET = "rob2pheno_val"
@@ -78,6 +78,15 @@ def load_model(cfg, variant_mod, ckpt):
     model.eval()
     DetectionCheckpointer(model).load(ckpt)
     return model
+
+
+def rg_counts(class_ids):
+    """(red, green) counts from an iterable/tensor of 0/1 class ids.
+
+    Class indices follow THING_CLASSES = [redfruit, greenfruit] -> 0=red, 1=green.
+    """
+    a = np.asarray(class_ids)
+    return int((a == 0).sum()), int((a == 1).sum())
 
 
 @torch.no_grad()
@@ -136,34 +145,38 @@ def main():
 
     out_dir = PROJECT_ROOT / args.out
     out_dir.mkdir(parents=True, exist_ok=True)
-    col_labels = ["RGB", "Ground Truth"] + [m[0] for m in MODELS]
-    ncols = len(col_labels)
 
     for rec in records:
         img_id = rec["image_id"]
         rgb = utils.read_image(rec["file_name"], format="RGB")
         stem = Path(rec["file_name"]).stem
 
-        fig, axes = plt.subplots(1, ncols, figsize=(3.2 * ncols, 3.4))
-        # Col 0: raw RGB
-        axes[0].imshow(rgb)
-        # Col 1: ground truth
+        # 3 rows x 2 cols: GT + 5 models. ravel() order is
+        # [GT | RGB], [RGBD Early | DCA K=0], [DCA K=1 | DCA K=2].
+        fig, axes = plt.subplots(3, 2, figsize=(2 * 3.6, 3 * 3.4))
+        axes = axes.ravel()
+
+        # Panel 0: ground truth + GT counts
         gt_vis = Visualizer(rgb, metadata=meta, instance_mode=ColorMode.SEGMENTATION)
-        axes[1].imshow(gt_vis.draw_dataset_dict(rec).get_image())
-        # Cols 2..: each model's prediction
+        axes[0].imshow(gt_vis.draw_dataset_dict(rec).get_image())
+        gr, gg = rg_counts([a["category_id"] for a in rec.get("annotations", [])])
+        axes[0].set_title(f"Ground Truth  (R:{gr} G:{gg})", fontsize=10)
+
+        # Panels 1..5: each model's prediction + its counts
         for j, (label, *_rest) in enumerate(MODELS):
             inst = all_preds[label].get(img_id)
             v = Visualizer(rgb, metadata=meta, instance_mode=ColorMode.SEGMENTATION)
             if inst is not None and len(inst):
                 img = v.draw_instance_predictions(inst).get_image()
+                r, g = rg_counts(inst.pred_classes.numpy())
             else:
-                img = rgb
-            axes[2 + j].imshow(img)
+                img, r, g = rgb, 0, 0
+            axes[1 + j].imshow(img)
+            axes[1 + j].set_title(f"{label}  (R:{r} G:{g})", fontsize=10)
 
-        for ax, title in zip(axes, col_labels):
-            ax.set_title(title, fontsize=10)
+        for ax in axes:
             ax.axis("off")
-        fig.suptitle(f"{stem}  (score>={args.score_thr})", fontsize=9, y=1.02)
+        fig.suptitle(f"{stem}  (score>={args.score_thr})", fontsize=10, y=1.01)
         fig.tight_layout()
         out_path = out_dir / f"val_{img_id:03d}_{stem}.png"
         fig.savefig(out_path, dpi=args.dpi, bbox_inches="tight")
