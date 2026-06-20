@@ -1,0 +1,23 @@
+[06/19 21:02:36] mask2former INFO: Variant: rgbd_dca
+[06/19 21:02:36] mask2former INFO: Output:  /bigdata/users/22164775/tomato-seg/output/rgbd_dca_iter1_ep200_mi6600_ee10_0_cos_dlr5_0_frz_sz1280_fold1of5_seed42_swin_tiny
+[06/19 21:02:37] mask2former INFO: [freeze] trainable: backbone.patch_embed_rgb.proj.weight (4608)
+[06/19 21:02:37] mask2former INFO: [freeze] trainable: backbone.patch_embed_rgb.proj.bias (96)
+[06/19 21:02:37] mask2former INFO: [freeze] trainable: backbone.patch_embed_rgb.norm.weight (96)
+[06/19 21:02:37] mask2former INFO: [freeze] trainable: backbone.patch_embed_rgb.norm.bias (96)
+[06/19 21:02:37] mask2former INFO: [freeze] trainable: backbone.patch_embed_depth.proj.weight (1536)
+[06/19 21:02:37] mask2former INFO: [freeze] trainable: backbone.patch_embed_depth.proj.bias (96)
+[06/19 21:02:37] mask2former INFO: [freeze] trainable: backbone.patch_embed_depth.norm.weight (96)
+[06/19 21:02:37] mask2former INFO: [freeze] trainable: backbone.patch_embed_depth.norm.bias (96)
+[06/19 21:02:37] mask2former INFO: [freeze] trainable: backbone.fusion.W_D1.weight (9216)
+[06/19 21:02:37] mask2former INFO: [freeze] trainable: backbone.fusion.W_D2.weight (9216)
+[06/19 21:02:37] mask2former INFO: [freeze] trainable: backbone.fusion.W_I1.weight (9216)
+[06/19 21:02:37] mask2former INFO: [freeze] trainable: backbone.fusion.iter_blocks.0.W_Iq.weight (9216)
+[06/19 21:02:37] mask2former INFO: [freeze] trainable: backbone.fusion.iter_blocks.0.W_Ik.weight (9216)
+[06/19 21:02:37] mask2former INFO: [freeze] trainable: backbone.fusion.iter_blocks.0.W_Dv.weight (9216)
+[06/19 21:02:37] mask2former INFO: [freeze] trainable: backbone.fusion.iter_blocks.0.W_Dq.weight (9216)
+[06/19 21:02:37] mask2former INFO: [freeze] trainable: backbone.fusion.iter_blocks.0.W_Dk.weight (9216)
+[06/19 21:02:37] mask2former INFO: [freeze] trainable: backbone.fusion.iter_blocks.0.W_Iv.weight (9216)
+[06/19 21:02:37] mask2former INFO: [freeze] trainable: sem_seg_head.predictor.class_embed.weight (768)
+[06/19 21:02:37] mask2former INFO: [freeze] trainable: sem_seg_head.predictor.class_embed.bias (3)
+[06/19 21:02:37] mask2former INFO: [freeze] 90435 / 47486365 params trainable (0.190%)
+[06/19 21:02:37] mask2former.modeling.transformer_decoder.mask2former_transformer_decoder WARNING: Weight format of MultiScaleMaskedTransformerDecoder have changed! Please upgrade your models. Applying automatic conversion now ...
