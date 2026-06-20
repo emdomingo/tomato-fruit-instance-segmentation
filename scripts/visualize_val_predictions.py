@@ -84,12 +84,15 @@ def load_model(cfg, variant_mod, ckpt):
 def run_model(label, variant_name, dca_iters, run_dir, max_size, score_thr):
     """Return {image_id: Instances(cpu)} of predictions over the val set."""
     run_dir = str(PROJECT_ROOT / run_dir) if not os.path.isabs(run_dir) else run_dir
-    ckpt = train._best_checkpoint_in_dir(run_dir, metric=f"{DATASET}/segm/AP")
+    # Select the checkpoint by the IN-FOLD validation AP (rob2pheno_fold_val), not
+    # the test set we're visualizing -- selecting on the test set would bias the
+    # figure, and the fold-val-best checkpoint is what cleanup_checkpoints.py kept
+    # on disk. metric=None makes _best_checkpoint_in_dir prefer fold_val AP.
+    ckpt = train._best_checkpoint_in_dir(run_dir, metric="rob2pheno_fold_val/segm/AP")
     if not os.path.isfile(ckpt):
         raise FileNotFoundError(
-            f"[{label}] best checkpoint resolved to {ckpt} but it's not on disk. "
-            f"Download that exact file from the HPC run dir (it's the best-AP "
-            f"checkpoint, not model_final.pth)."
+            f"[{label}] best (fold-val) checkpoint resolved to {ckpt} but it's not "
+            f"on disk. List the run dir's *.pth and download that file from the HPC."
         )
     print(f"[{label}] loading {os.path.basename(ckpt)}", flush=True)
     cfg, variant_mod = build_cfg_for(variant_name, dca_iters, ckpt, max_size)
