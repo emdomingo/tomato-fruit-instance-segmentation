@@ -205,7 +205,7 @@ def register_papple():
 def _best_checkpoint_in_dir(run_dir, metric=None):
     """Return the checkpoint in run_dir with the highest <metric> in metrics.json.
 
-    Used to warm-start each rgbd_dca_rgbinit run from the *best* RGB epoch rather
+    Used to select the best-by-AP checkpoint for evaluation/visualization rather
     than the final iteration, which tends to overfit (runs often peak well before
     MAX_ITER). Detectron2 names periodic checkpoints model_{iter:07d}.pth; the
     end-of-training state is saved as model_final.pth and logged at iteration ==
@@ -219,7 +219,7 @@ def _best_checkpoint_in_dir(run_dir, metric=None):
     metrics_path = os.path.join(run_dir, "metrics.json")
     if not os.path.isfile(metrics_path):
         raise FileNotFoundError(
-            f"Cannot auto-select best RGB checkpoint: {metrics_path} not found."
+            f"Cannot auto-select best checkpoint: {metrics_path} not found."
         )
     # best[key] = (iter, val); track the global max iteration for the final-eval case.
     best = {}
@@ -269,7 +269,7 @@ def _best_checkpoint_in_dir(run_dir, metric=None):
     else:
         ckpt = os.path.join(run_dir, f"model_{best_iter:07d}.pth")
     logging.getLogger("mask2former").info(
-        "[rgb-init] best checkpoint in %s: iter %d (%s=%.3f) -> %s",
+        "[best-ckpt] best checkpoint in %s: iter %d (%s=%.3f) -> %s",
         run_dir, best_iter, metric, best_val, os.path.basename(ckpt),
     )
     return ckpt
@@ -385,8 +385,7 @@ def build_cfg(args):
     # Eval/checkpoint cadence. --eval-epochs (optional) expresses it in epochs so
     # checkpoints land on epoch boundaries (best-by-AP checkpoint == an epoch);
     # otherwise fall back to --eval-period in iterations. Checkpoint and eval are
-    # kept aligned so the best-by-AP checkpoint always exists on disk for
-    # _best_checkpoint_in_dir / warm-starting.
+    # kept aligned so the best-by-AP checkpoint always exists on disk.
     if args.eval_epochs > 0:
         eval_period = max(1, round(args.eval_epochs * iters_per_epoch))
     else:
@@ -420,39 +419,11 @@ def build_cfg(args):
 
     # -- Variant-specific config --
     cfg.MODEL.DCA_ITERS = args.dca_iters
-    cfg.MODEL.DCA_HEADS = args.dca_heads
-    cfg.MODEL.DCA_WINDOW = args.dca_window
-    # Allow a "{fold}" placeholder in the RGB-init path so an array job can point
-    # each fold at the matching RGB fold run (e.g.
-    # output/rgb_..._fold{fold}of5_..._swin_tiny). The shell can't do this
-    # substitution itself, so resolve it here against the active fold index. When
-    # the resolved path is a directory we auto-select the best RGB checkpoint by
-    # fold-val AP rather than warm-starting from the (often overfit) final iter.
-    dca_rgb_init_weights = args.dca_rgb_init_weights
-    if "{fold}" in dca_rgb_init_weights:
-        if args.folds <= 0:
-            raise ValueError(
-                "--dca-rgb-init-weights contains '{fold}' but --folds is not set; "
-                "the placeholder can only be resolved during k-fold CV."
-            )
-        dca_rgb_init_weights = dca_rgb_init_weights.format(fold=args.fold_index)
-    if dca_rgb_init_weights and os.path.isdir(dca_rgb_init_weights):
-        dca_rgb_init_weights = _best_checkpoint_in_dir(dca_rgb_init_weights)
-    if dca_rgb_init_weights and not os.path.isfile(dca_rgb_init_weights):
-        raise FileNotFoundError(
-            f"--dca-rgb-init-weights points at a missing file: {dca_rgb_init_weights}"
-        )
-    cfg.MODEL.DCA_RGB_INIT_WEIGHTS = dca_rgb_init_weights
-    cfg.MODEL.DCA_RGB_INIT_LR_MULT = args.dca_rgb_init_lr_mult
     cfg.MODEL.DCA_LR_MULT = args.dca_lr_mult
     cfg.MODEL.FREEZE_NON_VARIANT = args.freeze_non_variant
 
     # -- Output --
-    if args.variant == "rgbd_dca_multihead":
-        suffix = f"_h{args.dca_heads}_iter{args.dca_iters}"
-    elif args.variant == "rgbd_dca_local":
-        suffix = f"_w{args.dca_window}_iter{args.dca_iters}"
-    elif args.variant.startswith("rgbd_dca"):
+    if args.variant.startswith("rgbd_dca"):
         suffix = f"_iter{args.dca_iters}"
     else:
         suffix = ""
@@ -582,12 +553,6 @@ class Rob2PhenoTrainer(DefaultTrainer):
             torch.nn.LocalResponseNorm,
         )
 
-        # rgbd_dca_rgbinit warm-starts patch_embed_rgb from a fine-tuned RGB
-        # checkpoint; keep it near-frozen with a tiny LR rather than the full
-        # base LR new variant modules otherwise get.
-        rgb_init_active = bool(getattr(cfg.MODEL, "DCA_RGB_INIT_WEIGHTS", ""))
-        rgb_init_lr = cfg.SOLVER.BASE_LR * getattr(cfg.MODEL, "DCA_RGB_INIT_LR_MULT", 1.0)
-
         # The DCA fusion + depth patch embed start from zero/mean-init and must
         # grow before the model overfits (~iter 2000), while the RGB tower is
         # already near-optimal. DCA_LR_MULT gives just those groups a faster LR
@@ -628,8 +593,6 @@ class Rob2PhenoTrainer(DefaultTrainer):
                     s in module_name for s in ("fusion", "patch_embed_depth")
                 ):
                     hyperparams["lr"] = hyperparams["lr"] * dca_lr_mult
-                if rgb_init_active and "patch_embed_rgb" in module_name:
-                    hyperparams["lr"] = rgb_init_lr
                 if (
                     "relative_position_bias_table" in module_param_name
                     or "absolute_pos_embed" in module_param_name
@@ -758,29 +721,6 @@ def parse_args():
         "--dca-iters", type=int, default=0,
         help="K bidirectional refinement cycles after the initial D->I step "
              "(rgbd_dca variant only; ignored otherwise).",
-    )
-    parser.add_argument(
-        "--dca-heads", type=int, default=4,
-        help="Number of attention heads for rgbd_dca_multihead "
-             "(must divide embed_dim; ignored otherwise).",
-    )
-    parser.add_argument(
-        "--dca-window", type=int, default=7,
-        help="Window size for rgbd_dca_local: cross-attention is restricted "
-             "to non-overlapping w×w token windows (w=1 -> pointwise fusion; "
-             "ignored by other variants). Appends '_w{val}' to OUTPUT_DIR.",
-    )
-    parser.add_argument(
-        "--dca-rgb-init-weights", type=str, default="",
-        help="Path to a fine-tuned RGB checkpoint (.pth). rgbd_dca_rgbinit "
-             "warm-starts patch_embed_rgb from this file's backbone.patch_embed.* "
-             "tensors (ignored by other variants).",
-    )
-    parser.add_argument(
-        "--dca-rgb-init-lr-mult", type=float, default=0.01,
-        help="LR multiplier (x BASE_LR) for the warm-started patch_embed_rgb in "
-             "rgbd_dca_rgbinit. Small value keeps the fine-tuned patch embed "
-             "nearly frozen (ignored unless --dca-rgb-init-weights is set).",
     )
     parser.add_argument(
         "--freeze-non-variant", action="store_true",

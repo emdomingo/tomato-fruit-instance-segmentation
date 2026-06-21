@@ -153,7 +153,15 @@ def main():
 
         # 3 rows x 2 cols: GT + 5 models. ravel() order is
         # [GT | RGB], [RGBD Early | DCA K=0], [DCA K=1 | DCA K=2].
-        fig, axes = plt.subplots(3, 2, figsize=(2 * 3.6, 3 * 3.4))
+        # Size each cell to the image's aspect ratio so imshow fills it,
+        # otherwise wide images leave large vertical gaps between rows.
+        h, w = rgb.shape[:2]
+        cell_w = 4.0
+        cell_h = cell_w * h / w
+        fig, axes = plt.subplots(
+            3, 2, figsize=(2 * cell_w, 3 * cell_h),
+            constrained_layout=True,
+        )
         axes = axes.ravel()
 
         # Panel 0: ground truth + GT counts
@@ -176,8 +184,7 @@ def main():
 
         for ax in axes:
             ax.axis("off")
-        fig.suptitle(f"{stem}  (score>={args.score_thr})", fontsize=10, y=1.01)
-        fig.tight_layout()
+        fig.suptitle(f"{stem}  (score>={args.score_thr})", fontsize=10)
         out_path = out_dir / f"val_{img_id:03d}_{stem}.png"
         fig.savefig(out_path, dpi=args.dpi, bbox_inches="tight")
         plt.close(fig)

@@ -8,7 +8,7 @@ Usage:
     python inference.py --variant rgb --val-set
 
     # Compare all 3 variants on validation set
-    python inference.py --variant rgb rgbd_early rgbd_bicma --val-set
+    python inference.py --variant rgb rgbd_early rgbd_dca --val-set
 
     # Custom checkpoint
     python inference.py --variant rgb --checkpoint output/rgb_swin_tiny/model_0001999.pth --image img.tiff
@@ -110,7 +110,7 @@ def prepare_input(image_path, variant_name, cfg):
     # BGR for detectron2
     rgb_bgr = rgb[:, :, ::-1]
 
-    if variant_name in ("rgbd_early", "rgbd_bicma", "rgbd_bicma_alpha", "rgbd_dca", "rgbd_dca_1iter"):
+    if variant_name in ("rgbd_early", "rgbd_dca"):
         # Derive depth path
         p = Path(image_path)
         depth_name = p.name.replace("_RGB.tiff", "_DEPTH.tiff")

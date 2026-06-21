@@ -9,7 +9,7 @@ them to single-channel grayscale before concatenating with RGB.
 Overview of Early Fusion
 ------------------------
 "Early fusion" means we merge RGB and depth at the very first layer of the
-network — before any learned feature extraction happens. Concretely:
+network - before any learned feature extraction happens. Concretely:
 
   1. The original Swin-Tiny backbone expects a 3-channel (RGB) input.
   2. We expand the first convolution (PatchEmbed.proj) to accept 4 channels
@@ -41,12 +41,9 @@ from detectron2.structures import BitMasks, Instances, polygons_to_bitmask
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Depth statistics — lazily computed from training-split depth TIFFs
+# Depth statistics
 # ---------------------------------------------------------------------------
 
-# Cache keyed by depth-dir path so we only scan once per process per dataset.
-# Both rgbd_early and rgbd_bicma call _compute_depth_stats(); the cache
-# ensures the (potentially slow) I/O only happens on the first call.
 _depth_stats_cache: dict = {}
 
 
@@ -323,10 +320,9 @@ class RGBDMapper:
         self._depth_fill = np.uint8(np.clip(round(depth_mean), 0, 255))
 
         # When True, append a 5th uint8 channel encoding the pre-fill
-        # depth validity (255 where original depth > 0, else 0). Variants
-        # like rgbd_dca_mask consume this to mask invalid tokens in
-        # cross-attention. Padded regions of the validity channel are
-        # filled with 0 (invalid).
+        # depth validity (255 where original depth > 0, else 0), which a
+        # variant can consume to mask invalid depth tokens. Padded regions
+        # of the validity channel are filled with 0 (invalid).
         self._include_validity = include_validity
 
         # Build augmentation list.
