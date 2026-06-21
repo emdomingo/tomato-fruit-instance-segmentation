@@ -186,3 +186,10 @@ sbatch slurm_visualize.sh
 
 Each model entry points at a training run directory; the best-by-validation-AP checkpoint is
 selected automatically (rather than the often-overfit final iteration).
+
+---
+
+## AI Declaration
+
+Generative AI tools were used to assist in coding, debugging, and documentation for this project. The author has reviewed, verified, and tested all AI-assisted contributions and takes full responsibility for the final work.
+

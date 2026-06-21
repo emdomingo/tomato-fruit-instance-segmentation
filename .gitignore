@@ -23,8 +23,9 @@ Mask2Former/
 # Claude related files
 .claude/
 
-# Markdown docs
+# Markdown docs (dev notes stay untracked; README is the submission entry point)
 *.md
+!README.md
 
 # Slurm output
 slurm-*.out
