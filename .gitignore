@@ -20,6 +20,12 @@ output/**/vis/
 # Mask2Former (upstream submodule / vendored)
 Mask2Former/
 
+# Notebook Archive
+notebooks_archive/
+
+# Scripts Archive
+scripts_archive/
+
 # Claude related files
 .claude/
 

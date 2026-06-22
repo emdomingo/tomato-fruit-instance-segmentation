@@ -23,6 +23,8 @@ The project compares three input variants to study whether depth helps segmentat
 train.py                 # Training script (Detectron2 DefaultTrainer)
 inference.py             # Run a trained variant on an image or the validation set
 check_dependencies.py    # Environment checker
+cv_splits.py             # Create deterministic k-fold splits of a COCO JSON
+aggregate_cv.py          # Aggregate per-fold metrics (mean +/- std, per-iter CSV)
 environment.yml          # Conda environment reference (Python 3.10, PyTorch 2.5.1, CUDA 11.8)
 slurm_train.sh           # SLURM job submission (GPU node)
 slurm_infer.sh           # SLURM inference job
@@ -78,7 +80,7 @@ Target: Python 3.10, PyTorch 2.5.1 / torchvision 0.20.1, CUDA 11.8.
 
 ### 1. Create the environment
 
-This environment runs on the HPC ampere partitions, since the newer hopper partitions don't provide the older Python and module versions required - those would have to be installed separately.
+This environment runs on the HPC ampere partitions. The newer hopper partitions might not be supported (trial runs failed on dependencies).
 
 ```bash
 conda create -p ~/conda_envs/tomato-seg python=3.10 && conda activate ~/conda_envs/tomato-seg
@@ -111,7 +113,7 @@ python check_dependencies.py
 ## Dataset
 
 This project uses the **Rob2Pheno** tomato RGB-D dataset (Afonso et al., 2020). The data is
-**not included** in this repository and is downloadable at:
+**not included** in this repository and is downloadable at this [link](https://drive.google.com/drive/folders/1I5YpHrGXsxVkZip8Ru3sgavnsGJ6Knvd?usp=drive_link).
 
 Extract it so the layout matches what `train.py` expects:
 
@@ -122,7 +124,6 @@ data/Rob2Pheno/
   train_2class.JSON     # Training annotations (83 images, COCO format, 2 classes)
   val_2class.JSON       # Validation annotations (40 images)
 ```
-
 
 ---
 
@@ -183,16 +184,16 @@ VARIANT=rgbd_dca DCA_ITERS=2         sbatch --array=0-4%2 slurm_train.sh
 
 
 # ── Group B — cosine schedule, FROZEN backbone, dca-lr-mult 5 (dca only) ───
-VARIANT=rgb        LR_SCHEDULER=WarmupCosineLR FREEZE=1                 sbatch --partition=ampere40 --array=0-4%2 slurm_train.sh
-VARIANT=rgbd_early LR_SCHEDULER=WarmupCosineLR FREEZE=1                 sbatch --partition=ampere40 --array=0-4%2 slurm_train.sh
+VARIANT=rgb        LR_SCHEDULER=WarmupCosineLR FREEZE=1                         sbatch --partition=ampere40 --array=0-4%2 slurm_train.sh
+VARIANT=rgbd_early LR_SCHEDULER=WarmupCosineLR FREEZE=1                         sbatch --partition=ampere40 --array=0-4%2 slurm_train.sh
 VARIANT=rgbd_dca DCA_ITERS=0 DCA_LR_MULT=5 LR_SCHEDULER=WarmupCosineLR FREEZE=1 sbatch --array=0-4%2 slurm_train.sh
 VARIANT=rgbd_dca DCA_ITERS=1 DCA_LR_MULT=5 LR_SCHEDULER=WarmupCosineLR FREEZE=1 sbatch --array=0-4%2 slurm_train.sh
 VARIANT=rgbd_dca DCA_ITERS=2 DCA_LR_MULT=5 LR_SCHEDULER=WarmupCosineLR FREEZE=1 sbatch --array=0-4%2 slurm_train.sh
 
 
 # ── Group C — cosine schedule, full fine-tune, dca-lr-mult 5 (dca only) ────
-VARIANT=rgb        LR_SCHEDULER=WarmupCosineLR                 sbatch --partition=ampere40 --array=0-4%2 slurm_train.sh
-VARIANT=rgbd_early LR_SCHEDULER=WarmupCosineLR                 sbatch --partition=ampere40 --array=0-4%2 slurm_train.sh
+VARIANT=rgb        LR_SCHEDULER=WarmupCosineLR                         sbatch --partition=ampere40 --array=0-4%2 slurm_train.sh
+VARIANT=rgbd_early LR_SCHEDULER=WarmupCosineLR                         sbatch --partition=ampere40 --array=0-4%2 slurm_train.sh
 VARIANT=rgbd_dca DCA_ITERS=0 DCA_LR_MULT=5 LR_SCHEDULER=WarmupCosineLR sbatch --array=0-4%2 slurm_train.sh
 VARIANT=rgbd_dca DCA_ITERS=1 DCA_LR_MULT=5 LR_SCHEDULER=WarmupCosineLR sbatch --array=0-4%2 slurm_train.sh
 VARIANT=rgbd_dca DCA_ITERS=2 DCA_LR_MULT=5 LR_SCHEDULER=WarmupCosineLR sbatch --array=0-4%2 slurm_train.sh
@@ -236,5 +237,5 @@ python scripts/cleanup_checkpoints.py --apply output/rgb output/rgbd_dca
 
 ## AI Declaration
 
-Generative AI tools were used to assist in coding, debugging, and documentation for this project. The author has reviewed, verified, and tested all AI-assisted contributions and takes full responsibility for the final work.
+Generative AI tools were used to assist in coding, debugging, and documentation for this project. The author has reviewed, modified, verified, and tested all AI-assisted contributions and takes full responsibility for the final work.
 
