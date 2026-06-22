@@ -1,6 +1,6 @@
 # Tomato Fruit Instance Segmentation
 
-Instance segmentation of tomato fruits — **ripe (red)** vs. **unripe (green)** — on the
+Instance segmentation of tomato fruits - **ripe (redfruit)** vs. **unripe (greenfruit)** using the
 [Rob2Pheno](#dataset) RGB-D dataset, using [Mask2Former](https://github.com/facebookresearch/Mask2Former)
 with a Swin-Tiny backbone (COCO-pretrained).
 
@@ -8,11 +8,11 @@ The project compares three input variants to study whether depth helps segmentat
 
 | Variant      | Input             | Fusion                                                                                   |
 |--------------|-------------------|------------------------------------------------------------------------------------------|
-| `rgb`        | RGB (3-ch)        | Baseline — standard Mask2Former pass-through.                                             |
-| `rgbd_early` | RGB + Depth (4-ch)| Early fusion — depth concatenated as a 4th channel into the patch embedding.             |
+| `rgb`        | RGB (3-ch)        | Baseline - standard Mask2Former pass-through.                                             |
+| `rgbd_early` | RGB + Depth (4-ch)| Early fusion - depth concatenated as a 4th channel into the patch embedding.             |
 | `rgbd_dca`   | RGB + Depth       | Depth-guided cross-attention: depth tokens attend into image tokens. `--dca-iters K` runs `K` bidirectional refinement cycles after the initial depth→image step. |
 
-> Earlier experimental/ablation variants (BiCMA, masked-DCA, multi-head DCA) are kept for
+> Earlier experimental variants are kept for
 > reference under [`variant_archive/`](variant_archive/) and are **not** registered or reported.
 
 ---
@@ -20,10 +20,10 @@ The project compares three input variants to study whether depth helps segmentat
 ## Repository structure
 
 ```
-train.py                 # Training entry point (Detectron2 DefaultTrainer)
+train.py                 # Training script (Detectron2 DefaultTrainer)
 inference.py             # Run a trained variant on an image or the validation set
-check_dependencies.py    # Pre-flight environment checker
-environment.yml          # Conda environment (Python 3.10, PyTorch 2.5.1, CUDA 11.8)
+check_dependencies.py    # Environment checker
+environment.yml          # Conda environment reference (Python 3.10, PyTorch 2.5.1, CUDA 11.8)
 slurm_train.sh           # SLURM job submission (GPU node)
 slurm_infer.sh           # SLURM inference job
 slurm_visualize.sh       # SLURM visualization job
@@ -39,10 +39,10 @@ scripts/
   visualize_val_predictions.py  # Side-by-side prediction contact sheets (rob2pheno_val)
   cleanup_checkpoints.py        # Prune output dirs to best-by-AP + model_final.pth
 
-Mask2Former/             # Vendored upstream Mask2Former (see Environment, not tracked here)
-data/Rob2Pheno/          # Dataset (not included — see Dataset)
-pretrained/              # COCO-pretrained Mask2Former weights (not included)
-output/                  # Training runs: metrics, configs, logs (checkpoints are not tracked)
+Mask2Former/             # Vendored upstream Mask2Former (see Environment, not tracked in repo)
+data/Rob2Pheno/          # Dataset (not tracked in repo)
+pretrained/              # COCO-pretrained Mask2Former weights (not tracked in repo)
+output/                  # Training runs: metrics, configs, logs (checkpoints (.pth) not tracked)
 ```
 
 ---
@@ -64,11 +64,11 @@ Target: Python 3.10, PyTorch 2.5.1 / torchvision 0.20.1, CUDA 11.8.
 
 ### 0. Obtain the vendored dependencies (not in this repo)
 
-- **Mask2Former** — clone Facebook's repo into `Mask2Former/`:
+- **Mask2Former** - clone Facebook's repo into `Mask2Former/`:
   ```bash
   git clone https://github.com/facebookresearch/Mask2Former.git Mask2Former
   ```
-- **COCO-pretrained weights** — download the Swin-Tiny instance-segmentation checkpoint
+- **COCO-pretrained weights** - download the Swin-Tiny instance-segmentation checkpoint
   from the Mask2Former model zoo into `pretrained/` (the path `train.py` expects):
   ```bash
   mkdir -p pretrained
@@ -78,7 +78,7 @@ Target: Python 3.10, PyTorch 2.5.1 / torchvision 0.20.1, CUDA 11.8.
 
 ### 1. Create the environment
 
-This environment runs on the HPC ampere partitions, since the newer hopper partitions don't provide the older Python and module versions required—those would have to be installed separately.
+This environment runs on the HPC ampere partitions, since the newer hopper partitions don't provide the older Python and module versions required - those would have to be installed separately.
 
 ```bash
 conda create -p ~/conda_envs/tomato-seg python=3.10 && conda activate ~/conda_envs/tomato-seg
@@ -111,9 +111,7 @@ python check_dependencies.py
 ## Dataset
 
 This project uses the **Rob2Pheno** tomato RGB-D dataset (Afonso et al., 2020). The data is
-**not included** in this repository.
-
-> **Datasets are available at:**
+**not included** in this repository and is downloadable at:
 
 Extract it so the layout matches what `train.py` expects:
 
@@ -125,14 +123,13 @@ data/Rob2Pheno/
   val_2class.JSON       # Validation annotations (40 images)
 ```
 
-Classes: `0 = red (ripe)`, `1 = green (unripe)`.
 
 ---
 
 ## Training
 
 > **Training requires a Linux GPU node** (the MSDeformAttn CUDA kernel). It is launched on the
-> HPC via SLURM; configuration is passed through environment variables.
+> HPC via SLURM; configuration is passed through environment variables. Note: the ampere40 partitioned is used to train the `rgb` and `rgb_early` variants, while the ampere80 partion is used for the `rgb_dca` variant.
 
 Single run (RGB baseline):
 ```bash
@@ -165,8 +162,41 @@ VARIANT=rgb FOLDS=5 sbatch --array=0-4%2 slurm_train.sh
 | `INPUT_MAX_SIZE` | `--input-max-size`   | `1280`  | Max image size for train + test.                         |
 | `FOLDS`          | `--folds`            | —       | Enable k-fold CV (array job).                            |
 
-Run `python train.py --help` for the full argument list. Outputs (metrics, config, logs) are
-written under `output/<run-name>/`; checkpoints are kept locally but not committed.
+Outputs (metrics, config, logs) are written under `output/<run-name>/`; checkpoints are kept locally but not committed.
+
+### Final Training Run
+
+The following script was used to train the final models used in the report. Note: `Group C` is the main group reported.
+
+```
+# ── Common to every run
+export EPOCHS=200 EVAL_EPOCHS=10 WARMUP_FACTOR=0.01 FOLDS=5
+# (slurm defaults already supply: BATCH_SIZE=2, LR=1e-4, INPUT_MAX_SIZE=1280, CV_SEED=42)
+
+
+# ── Group A — step decay (WarmupMultiStepLR), full fine-tune ───────────────
+VARIANT=rgb                          sbatch --partition=ampere40 --array=0-4%2 slurm_train.sh
+VARIANT=rgbd_early                   sbatch --partition=ampere40 --array=0-4%2 slurm_train.sh
+VARIANT=rgbd_dca DCA_ITERS=0         sbatch --array=0-4%2 slurm_train.sh
+VARIANT=rgbd_dca DCA_ITERS=1         sbatch --array=0-4%2 slurm_train.sh
+VARIANT=rgbd_dca DCA_ITERS=2         sbatch --array=0-4%2 slurm_train.sh
+
+
+# ── Group B — cosine schedule, FROZEN backbone, dca-lr-mult 5 (dca only) ───
+VARIANT=rgb        LR_SCHEDULER=WarmupCosineLR FREEZE=1                 sbatch --partition=ampere40 --array=0-4%2 slurm_train.sh
+VARIANT=rgbd_early LR_SCHEDULER=WarmupCosineLR FREEZE=1                 sbatch --partition=ampere40 --array=0-4%2 slurm_train.sh
+VARIANT=rgbd_dca DCA_ITERS=0 DCA_LR_MULT=5 LR_SCHEDULER=WarmupCosineLR FREEZE=1 sbatch --array=0-4%2 slurm_train.sh
+VARIANT=rgbd_dca DCA_ITERS=1 DCA_LR_MULT=5 LR_SCHEDULER=WarmupCosineLR FREEZE=1 sbatch --array=0-4%2 slurm_train.sh
+VARIANT=rgbd_dca DCA_ITERS=2 DCA_LR_MULT=5 LR_SCHEDULER=WarmupCosineLR FREEZE=1 sbatch --array=0-4%2 slurm_train.sh
+
+
+# ── Group C — cosine schedule, full fine-tune, dca-lr-mult 5 (dca only) ────
+VARIANT=rgb        LR_SCHEDULER=WarmupCosineLR                 sbatch --partition=ampere40 --array=0-4%2 slurm_train.sh
+VARIANT=rgbd_early LR_SCHEDULER=WarmupCosineLR                 sbatch --partition=ampere40 --array=0-4%2 slurm_train.sh
+VARIANT=rgbd_dca DCA_ITERS=0 DCA_LR_MULT=5 LR_SCHEDULER=WarmupCosineLR sbatch --array=0-4%2 slurm_train.sh
+VARIANT=rgbd_dca DCA_ITERS=1 DCA_LR_MULT=5 LR_SCHEDULER=WarmupCosineLR sbatch --array=0-4%2 slurm_train.sh
+VARIANT=rgbd_dca DCA_ITERS=2 DCA_LR_MULT=5 LR_SCHEDULER=WarmupCosineLR sbatch --array=0-4%2 slurm_train.sh
+```
 
 ---
 
@@ -188,6 +218,21 @@ Each model entry points at a training run directory; the best-by-validation-AP c
 selected automatically (rather than the often-overfit final iteration).
 
 ---
+
+## Clean-up
+
+Because training saves checkpoints after a set epoch/iteration, it could use up a lot of disk space. It is recommended to clean-up the drive by using the `cleanup_checkpoints.py` script, which retains only the best and the final checkpoints. Small artifacts are always kept.
+
+```bash
+# Dry run
+python scripts/cleanup_checkpoints.py output/rgb output/rgbd_dca
+
+# Dry run, targeting a specific group
+python scripts/cleanup_checkpoints.py output/*swin_tiny
+
+# Actually delete the redundant checkpoints:
+python scripts/cleanup_checkpoints.py --apply output/rgb output/rgbd_dca
+```
 
 ## AI Declaration
 
