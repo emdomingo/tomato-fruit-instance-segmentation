@@ -1,10 +1,30 @@
 # Tomato Fruit Instance Segmentation
 
-Instance segmentation of tomato fruits - **ripe (redfruit)** vs. **unripe (greenfruit)** using the
-[Rob2Pheno](#dataset) RGB-D dataset, using [Mask2Former](https://github.com/facebookresearch/Mask2Former)
-with a Swin-Tiny backbone (COCO-pretrained).
+### Can depth information help a harvesting robot segment fruit that RGB alone gets wrong?
 
-The project compares three input variants to study whether depth helps segmentation:
+A tomato-harvesting robot needs a **per-fruit mask** to decide what to pick and where to grip.
+RGB-only models fail exactly where it matters most - fruit occluded by leaves and stems, or
+touching other fruit, where colour and texture give no boundary to cut on. The depth channel
+of an RGB-D camera carries that boundary directly, so the question is **how to fuse it**: is a
+cheap 4-channel concatenation at the patch embedding enough, or does depth have to actively
+steer the image features through a learned cross-attention mechanism - and does either one
+actually beat plain RGB?
+
+This repo modifies [Mask2Former](https://github.com/facebookresearch/Mask2Former) (Swin-Tiny
+backbone, COCO-pretrained) to accept RGB-D both ways, and measures them against the RGB
+baseline on the [Rob2Pheno](#dataset) greenhouse tomato dataset - **ripe (redfruit)** vs.
+**unripe (greenfruit)** - under 5-fold cross-validation, so differences are reported as
+mean +/- std rather than a single lucky split.
+
+**Result: null.** Neither depth-fusion design beat the RGB baseline. A
+[patch-embedding analysis](notebooks/patch_embedding_analysis.ipynb) shows why: depth acts on
+the background regions, where it is not needed, rather than on the fruit clusters themselves.
+
+![Predicted instance masks on a validation image](viz_val/val_010_RealSense_T20190528_230504_R02_P016870_H1630_A%2B000_RGB.png)
+
+*Example prediction on a held-out validation image: ripe and unripe fruit instance masks.*
+
+**The three input variants compared:**
 
 | Variant      | Input             | Fusion                                                                                   |
 |--------------|-------------------|------------------------------------------------------------------------------------------|
