@@ -1,0 +1,13 @@
+cff-version: 1.2.0
+message: "If you use this work, please cite it as below."
+title: "Depth Fusion for Tomato Fruit Instance Segmentation: RGB vs. RGB-D Mask2Former on Rob2Pheno"
+type: software
+authors:
+  - given-names: "Edward John"
+    family-names: "Domingo"
+version: 1.0.0
+date-released: "2026-10-05"
+license: MIT
+repository-code: "https://github.com/emdomingo/tomato-fruit-instance-segmentation"
+# Add after the first release - use the CONCEPT DOI:
+# doi: 10.5281/zenodo.[concept]

@@ -1,5 +1,7 @@
 # Tomato Fruit Instance Segmentation
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.CONCEPT.svg)](https://doi.org/10.5281/zenodo.CONCEPT)
+
 ### Can depth information help a harvesting robot segment fruit that RGB alone gets wrong?
 
 A tomato-harvesting robot needs a **per-fruit mask** to decide what to pick and where to grip.

@@ -1,0 +1,21 @@
+{
+  "title": "Depth Fusion for Tomato Fruit Instance Segmentation: RGB vs. RGB-D Mask2Former on Rob2Pheno",
+  "upload_type": "software",
+  "access_right": "open",
+  "license": "mit",
+  "creators": [
+    { "name": "Domingo, Edward John" }
+  ],
+  "description": "<p>Code, training configurations, cross-validation metrics and presentation slides for a controlled comparison of RGB and RGB-D input designs for instance segmentation of ripe (red) and unripe (green) tomato fruit. Mask2Former with a COCO-pretrained Swin-Tiny backbone is modified to accept depth in two ways: early fusion (depth concatenated as a fourth channel at the patch embedding) and depth-guided cross-attention (depth tokens attend into image tokens, with K bidirectional refinement cycles). Each design is compared against an RGB baseline on the Rob2Pheno greenhouse tomato RGB-D dataset (Afonso et al., 2020) under 5-fold cross-validation, reported as mean and standard deviation.</p><p>The result is null: neither depth-fusion design beats the RGB baseline. A patch-embedding analysis shows that depth acts mainly on background regions rather than on the fruit clusters, where it would be needed. The dataset, the upstream Mask2Former code and the pretrained weights are not included; the README explains how to obtain them.</p>",
+  "keywords": [
+    "instance segmentation",
+    "RGB-D",
+    "depth fusion",
+    "Mask2Former",
+    "Swin Transformer",
+    "cross-attention",
+    "tomato",
+    "agricultural robotics",
+    "Rob2Pheno"
+  ]
+}
