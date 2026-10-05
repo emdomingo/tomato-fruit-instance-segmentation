@@ -5,9 +5,8 @@ type: software
 authors:
   - given-names: "Edward John"
     family-names: "Domingo"
-version: 1.0.0
+version: 1.0.1
 date-released: "2026-10-05"
 license: MIT
 repository-code: "https://github.com/emdomingo/tomato-fruit-instance-segmentation"
-# Add after the first release - use the CONCEPT DOI:
-# doi: 10.5281/zenodo.[concept]
+doi: 10.5281/zenodo.23160623

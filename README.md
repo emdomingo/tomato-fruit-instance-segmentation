@@ -1,6 +1,6 @@
 # Tomato Fruit Instance Segmentation
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.CONCEPT.svg)](https://doi.org/10.5281/zenodo.CONCEPT)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23160623.svg)](https://doi.org/10.5281/zenodo.23160623)
 
 **[Report (PDF)](rgbd-instance-segmentation-report.pdf)** · **[Presentation slides (PPTX)](rgbd-instance-segmentation-presentation.pptx)**
 
