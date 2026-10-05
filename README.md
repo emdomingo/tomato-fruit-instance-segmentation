@@ -2,6 +2,8 @@
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.CONCEPT.svg)](https://doi.org/10.5281/zenodo.CONCEPT)
 
+**[Report (PDF)](rgbd-instance-segmentation-report.pdf)** · **[Presentation slides (PPTX)](rgbd-instance-segmentation-presentation.pptx)**
+
 ### Can depth information help a harvesting robot segment fruit that RGB alone gets wrong?
 
 A tomato-harvesting robot needs a **per-fruit mask** to decide what to pick and where to grip.
